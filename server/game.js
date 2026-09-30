@@ -1,3 +1,5 @@
+import { MOVEMENT, TRANSPORT } from "../shared/config.js";
+import { malayalamDisplayName } from "../shared/names.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { heightAt, sanitizeName, SEAT_COUNT, STOPS } from "../shared/world.js";
@@ -15,12 +17,19 @@ const collisionData = JSON.parse(
   readFileSync(new URL("../shared/colliders.json", import.meta.url)),
 );
 export class Game {
-  constructor({ interval = 120, dwell = 14, now = () => Date.now() } = {}) {
+  constructor({
+    interval = TRANSPORT.busStopTargetIntervalSeconds,
+    dwell = TRANSPORT.dwellSeconds,
+    respawnSeconds = TRANSPORT.abandonedVehicleSeconds,
+    now = () => Date.now(),
+  } = {}) {
+    this.respawnSeconds = respawnSeconds;
     this.players = new Map();
     this.vehicles = makeVehicles();
     this.schedule = createBusSchedule(interval, dwell);
     this.now = now;
     this.epoch = now();
+    this.vehicles.forEach((v) => (v.lastUsed = now()));
     this.buses = [];
     this.seats = Array.from({ length: this.schedule.fleet }, () =>
       Array(SEAT_COUNT).fill(null),
@@ -41,6 +50,9 @@ export class Game {
     const p = {
       id: randomUUID(),
       name,
+      originalUsername: name,
+      displayNameMalayalam: malayalamDisplayName(name),
+      sprinting: false,
       x: 0,
       y: 0.25,
       z: 29,
@@ -62,6 +74,7 @@ export class Game {
     for (const v of this.vehicles)
       if (v.owner === id) {
         v.owner = null;
+        v.lastUsed = this.now();
         v.input = {};
         v.speed = 0;
       }
@@ -76,7 +89,11 @@ export class Game {
     if (!p || p.mode !== "walk") return;
     if (![data.x, data.y, data.z, data.yaw].every(Number.isFinite)) return;
     const dt = Math.min(1, (this.now() - p.lastMove) / 1000);
-    if (Math.hypot(data.x - p.x, data.z - p.z) > dt * 13 + 1.5) return;
+    if (
+      Math.hypot(data.x - p.x, data.z - p.z) >
+      dt * (MOVEMENT.sprint + 2) + 1.5
+    )
+      return;
     const floor = heightAt(data.x, data.z);
     if (
       data.y < floor - 0.2 ||
@@ -90,6 +107,7 @@ export class Game {
       z: data.z,
       yaw: data.yaw,
       moving: !!data.moving,
+      sprinting: !!data.sprinting,
       lastMove: this.now(),
     });
   }
@@ -103,6 +121,7 @@ export class Game {
         throw Error("Move closer to the vehicle.");
       if (v.owner) throw Error("This vehicle already has a driver.");
       v.owner = id;
+      v.lastUsed = this.now();
       v.input = {};
       v.inputAt = this.now();
       p.mode = v.kind;
@@ -117,7 +136,7 @@ export class Game {
       throw Error("Move closer to the bus.");
     const seats = this.seats[Number(b.id.split("-")[1])],
       seat = seats.indexOf(null);
-    if (seat < 0) throw Error("BUS FULL — all 20 seats are occupied.");
+    if (seat < 0) throw Error("BUS FULL · Next bus arriving soon.");
     seats[seat] = id;
     p.mode = "bus";
     p.vehicleId = b.id;
@@ -142,6 +161,7 @@ export class Game {
     if (p.mode === "bus") this.seats[Number(v.id.split("-")[1])][p.seat] = null;
     else {
       v.owner = null;
+      v.lastUsed = this.now();
       v.input = {};
       v.speed = 0;
     }
@@ -172,6 +192,18 @@ export class Game {
       seats: this.seats[i],
     }));
     for (const v of this.vehicles) {
+      if (v.owner) v.lastUsed = now;
+      else if (now - v.lastUsed > this.respawnSeconds * 1000) {
+        const spawn = makeVehicles().find((s) => s.id === v.id);
+        const nearPlayer = [...this.players.values()].some(
+          (p) =>
+            Math.hypot(p.x - v.x, p.z - v.z) < 12 ||
+            Math.hypot(p.x - spawn.x, p.z - spawn.z) < 12,
+        );
+        if (!nearPlayer) {
+          Object.assign(v, spawn, { lastUsed: now });
+        }
+      }
       if (now - v.inputAt > 450) v.input = { brake: true };
       stepVehicle(v, v.input, dt, collisionData);
     }
@@ -195,12 +227,26 @@ export class Game {
       type: "snapshot",
       time: this.now(),
       players: [...this.players.values()].map(({ lastMove, ...p }) => p),
-      vehicles: this.vehicles.map(({ input, inputAt, ...v }) => v),
+      vehicles: this.vehicles.map(({ input, inputAt, lastUsed, ...v }) => v),
       buses: this.buses,
-      stops: STOPS.map((s) => ({
-        id: s.id,
-        next: countdown(this.schedule, (this.now() - this.epoch) / 1000, s.id),
-      })),
+      stops: STOPS.map((s) => {
+        const seconds = (this.now() - this.epoch) / 1000;
+        const boarding = this.buses.find((b) => b.stop === s.id && b.doors);
+        const full = !!boarding && boarding.seats.every(Boolean);
+        const next = countdown(this.schedule, seconds, s.id, !!boarding);
+        return {
+          id: s.id,
+          next: boarding && !full ? 0 : next,
+          nextService: next,
+          state: boarding
+            ? full
+              ? "full"
+              : "boarding"
+            : next <= 3
+              ? "arriving"
+              : "waiting",
+        };
+      }),
       interval: this.schedule.interval,
     };
   }

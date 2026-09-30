@@ -1,6 +1,9 @@
 export type PlayerState = {
   id: string;
   name: string;
+  originalUsername: string;
+  displayNameMalayalam: string;
+  sprinting: boolean;
   x: number;
   y: number;
   z: number;
@@ -42,7 +45,7 @@ export type Snapshot = {
   players: PlayerState[];
   vehicles: VehicleState[];
   buses: BusState[];
-  stops: { id: string; next: number }[];
+  stops: { id: string; next: number; nextService: number; state: string }[];
   interval: number;
 };
 export class Network {

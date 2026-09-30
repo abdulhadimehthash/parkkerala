@@ -1,3 +1,4 @@
+import { VOICE } from "../../shared/config.js";
 import { Network, type PlayerState } from "./client";
 import { voiceVolume } from "../../shared/world.js";
 type Peer = {
@@ -6,6 +7,11 @@ type Peer = {
   pending: RTCIceCandidateInit[];
   offered: boolean;
   volume: number;
+  source?: MediaStreamAudioSourceNode;
+  gain?: GainNode;
+  pan?: StereoPannerNode;
+  disconnectedAt: number;
+  createdAt: number;
 };
 export class ProximityVoice {
   stream: MediaStream | null = null;
@@ -17,10 +23,24 @@ export class ProximityVoice {
   private context: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private previousSpeaking = false;
+  private speakingUntil = 0;
+  private level = 0;
   private updated = 0;
+  private joinedId = "";
+  private retryAt = new Map<string, number>();
+  private pendingSignals = new Map<string, Promise<void>>();
   onStatus: (message: string) => void = () => {};
   constructor(private network: Network) {
-    network.onSignal = (id, signal) => void this.signal(id, signal);
+    network.onSignal = (id, signal) => {
+      const pending = (this.pendingSignals.get(id) ?? Promise.resolve()).then(
+        () => this.signal(id, signal),
+      );
+      this.pendingSignals.set(id, pending);
+      void pending.finally(() => {
+        if (this.pendingSignals.get(id) === pending)
+          this.pendingSignals.delete(id);
+      });
+    };
   }
   async configure() {
     try {
@@ -37,6 +57,7 @@ export class ProximityVoice {
       this.stream?.getTracks().forEach((t) => t.stop());
       this.stream = null;
       this.enabled = false;
+      this.analyser?.disconnect();
       this.analyser = null;
       for (const peer of this.peers.values())
         void peer.pc
@@ -59,6 +80,12 @@ export class ProximityVoice {
         video: false,
       });
       this.enabled = true;
+      this.stream.getAudioTracks()[0].onended = () => {
+        if (this.enabled) void this.toggle();
+        this.onStatus(
+          "Microphone disconnected. Reconnect a device and turn the mic on.",
+        );
+      };
       this.context ??= new AudioContext();
       await this.context.resume();
       this.analyser = this.context.createAnalyser();
@@ -77,9 +104,11 @@ export class ProximityVoice {
       this.onStatus(
         error instanceof DOMException && error.name === "NotAllowedError"
           ? "Microphone permission denied. Enable it in your browser to speak."
-          : error instanceof Error
-            ? error.message
-            : "Microphone unavailable.",
+          : error instanceof DOMException && error.name === "NotFoundError"
+            ? "No microphone found. Connect a microphone and try again."
+            : error instanceof Error
+              ? error.message
+              : "Microphone unavailable.",
       );
     }
   }
@@ -93,11 +122,20 @@ export class ProximityVoice {
     audio.dataset.peer = id;
     audio.hidden = true;
     document.body.append(audio);
-    peer = { pc, audio, pending: [], offered: false, volume: 0 };
+    peer = {
+      pc,
+      audio,
+      pending: [],
+      offered: false,
+      volume: 0,
+      disconnectedAt: 0,
+      createdAt: performance.now(),
+    };
     this.peers.set(id, peer);
-    if(this.network.id<id){
-      const tr=pc.addTransceiver('audio',{direction:'sendrecv'});
-      if(this.stream)void tr.sender.replaceTrack(this.stream.getAudioTracks()[0]);
+    if (this.network.id < id) {
+      const tr = pc.addTransceiver("audio", { direction: "sendrecv" });
+      if (this.stream)
+        void tr.sender.replaceTrack(this.stream.getAudioTracks()[0]);
     }
     pc.onicecandidate = (e) => {
       if (e.candidate)
@@ -110,6 +148,7 @@ export class ProximityVoice {
     pc.ontrack = (e) => {
       audio.srcObject = new MediaStream([e.track]);
       audio.volume = 0;
+      this.attachSpatial(peer!);
       void audio
         .play()
         .catch(() =>
@@ -119,19 +158,22 @@ export class ProximityVoice {
         );
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed") {
-        this.onStatus(
-          this.turnConfigured
-            ? "Voice connection failed. Toggle the mic to retry."
-            : "Direct voice connection failed on this network. A TURN relay is needed.",
-        );
-        this.drop(id);
-      }
+      if (pc.connectionState === "connected") {
+        peer!.disconnectedAt = 0;
+        this.retryAt.delete(id);
+      } else if (pc.connectionState === "disconnected")
+        peer!.disconnectedAt = performance.now();
+      else if (pc.connectionState === "failed") this.retry(id);
     };
     return peer;
   }
   private async signal(id: string, signal: any) {
     try {
+      if (signal.reset) {
+        this.drop(id);
+        this.retryAt.set(id, performance.now() + 500);
+        return;
+      }
       const peer = this.make(id);
       if (signal.description) {
         await peer.pc.setRemoteDescription(signal.description);
@@ -139,8 +181,15 @@ export class ProximityVoice {
           await peer.pc.addIceCandidate(candidate);
         peer.pending = [];
         if (signal.description.type === "offer") {
-          const transceiver=peer.pc.getTransceivers().find(t=>t.receiver.track.kind==='audio');
-          if(transceiver){transceiver.direction='sendrecv';await transceiver.sender.replaceTrack(this.stream?.getAudioTracks()[0]??null);}
+          const transceiver = peer.pc
+            .getTransceivers()
+            .find((t) => t.receiver.track.kind === "audio");
+          if (transceiver) {
+            transceiver.direction = "sendrecv";
+            await transceiver.sender.replaceTrack(
+              this.stream?.getAudioTracks()[0] ?? null,
+            );
+          }
           const answer = await peer.pc.createAnswer();
           await peer.pc.setLocalDescription(answer);
           this.network.send({
@@ -158,20 +207,54 @@ export class ProximityVoice {
       this.onStatus("Voice connection interrupted.");
     }
   }
-  update(players: PlayerState[], self: PlayerState | undefined) {
+  update(players: PlayerState[], self: PlayerState | undefined, cameraYaw = 0) {
     if (!self) {
       for (const id of this.peers.keys()) this.drop(id);
       return;
+    }
+    if (this.joinedId !== self.id) {
+      this.joinedId = self.id;
+      this.network.send({ type: "voice", mic: this.enabled, speaking: false });
     }
     const nearby = new Set<string>();
     for (const p of players) {
       if (p.id === self.id) continue;
       const distance = Math.hypot(p.x - self.x, p.y - self.y, p.z - self.z);
-      if (distance > 45 || (!p.mic && !this.enabled)) continue;
+      if (distance > VOICE.connectionRadius || (!p.mic && !this.enabled))
+        continue;
       nearby.add(p.id);
+      if (performance.now() < (this.retryAt.get(p.id) ?? 0)) continue;
       const peer = this.make(p.id);
       peer.volume = this.muted ? 0 : voiceVolume(distance);
-      peer.audio.volume = peer.volume;
+      if (
+        peer.pc.connectionState !== "connected" &&
+        performance.now() - peer.createdAt > 12000
+      ) {
+        this.retry(p.id);
+        continue;
+      }
+      if (
+        peer.disconnectedAt &&
+        performance.now() - peer.disconnectedAt > 8000
+      ) {
+        this.retry(p.id);
+        continue;
+      }
+      this.attachSpatial(peer);
+      const pan =
+        (((p.x - self.x) * Math.cos(cameraYaw) -
+          (p.z - self.z) * Math.sin(cameraYaw)) /
+          Math.max(1, distance)) *
+        VOICE.maxPan;
+      if (peer.gain && this.context) {
+        peer.audio.muted = true;
+        peer.gain.gain.setTargetAtTime(
+          peer.volume,
+          this.context.currentTime,
+          0.08,
+        );
+        peer.pan?.pan.setTargetAtTime(pan, this.context.currentTime, 0.08);
+      } else peer.audio.volume = peer.volume;
       if (this.network.id < p.id && !peer.offered) {
         peer.offered = true;
         void peer.pc
@@ -194,11 +277,12 @@ export class ProximityVoice {
       if (this.enabled && this.analyser) {
         const values = new Uint8Array(256);
         this.analyser.getByteTimeDomainData(values);
-        speaking =
-          Math.sqrt(
-            values.reduce((sum, v) => sum + Math.pow((v - 128) / 128, 2), 0) /
-              256,
-          ) > 0.025;
+        this.level = Math.sqrt(
+          values.reduce((sum, v) => sum + Math.pow((v - 128) / 128, 2), 0) /
+            256,
+        );
+        if (this.level > 0.018) this.speakingUntil = performance.now() + 350;
+        speaking = performance.now() < this.speakingUntil;
       }
       if (speaking !== this.previousSpeaking) {
         this.previousSpeaking = speaking;
@@ -206,14 +290,54 @@ export class ProximityVoice {
       }
     }
   }
+  private retry(id: string) {
+    this.network.send({ type: "signal", to: id, signal: { reset: true } });
+    this.drop(id);
+    this.retryAt.set(id, performance.now() + 2500);
+    this.onStatus(
+      this.turnConfigured
+        ? "Voice reconnecting…"
+        : "Voice reconnecting… A TURN relay may be needed on restricted networks.",
+    );
+  }
+  private attachSpatial(peer: Peer) {
+    if (
+      peer.source ||
+      !this.context ||
+      !(peer.audio.srcObject instanceof MediaStream)
+    )
+      return;
+    try {
+      peer.source = this.context.createMediaStreamSource(peer.audio.srcObject);
+      peer.gain = this.context.createGain();
+      peer.gain.gain.value = 0;
+      peer.pan = this.context.createStereoPanner();
+      peer.source
+        .connect(peer.gain)
+        .connect(peer.pan)
+        .connect(this.context.destination);
+      peer.audio.muted = true;
+    } catch {
+      peer.source?.disconnect();
+      peer.source = undefined;
+      peer.audio.muted = false;
+    }
+  }
   listen() {
+    this.context ??= new AudioContext();
+    void this.context.resume();
+    for (const peer of this.peers.values()) this.attachSpatial(peer);
     for (const peer of this.peers.values())
       void peer.audio.play().catch(() => {});
   }
   private drop(id: string) {
     const peer = this.peers.get(id);
     if (!peer) return;
+    peer.pc.onconnectionstatechange = null;
     peer.pc.close();
+    peer.source?.disconnect();
+    peer.gain?.disconnect();
+    peer.pan?.disconnect();
     peer.audio.srcObject = null;
     peer.audio.remove();
     this.peers.delete(id);
@@ -244,6 +368,9 @@ export class ProximityVoice {
       id,
       state: p.pc.connectionState,
       volume: p.volume,
+      pan: p.pan?.pan.value ?? 0,
+      spatial: !!p.source,
+      inputLevel: this.level,
     }));
   }
 }

@@ -1,3 +1,4 @@
+import { TRANSPORT } from "./config.js";
 import {
   BOUNDS,
   heightAt,
@@ -96,7 +97,10 @@ export function safeExit(v, colliders) {
     }
   return null;
 }
-export function createBusSchedule(interval = 120, dwell = 14) {
+export function createBusSchedule(
+  interval = TRANSPORT.busStopTargetIntervalSeconds,
+  dwell = TRANSPORT.dwellSeconds,
+) {
   const timeline = [];
   let t = 0;
   for (let i = 0; i < ROUTE.length - 1; i++) {
@@ -107,20 +111,30 @@ export function createBusSchedule(interval = 120, dwell = 14) {
       timeline.push({ start: t, end: t + dwell, a, b: a, stop: stop.id });
       t += dwell;
     }
-    const duration = Math.hypot(b[0] - a[0], b[1] - a[1]) / 13;
+    const duration =
+      Math.hypot(b[0] - a[0], b[1] - a[1]) / TRANSPORT.cruiseSpeed;
     timeline.push({ start: t, end: t + duration, a, b, stop: null });
     t += duration;
   }
-  const fleet = Math.ceil(t / interval),
-    cycle = fleet * interval;
-  if (cycle > t)
-    timeline.push({
-      start: t,
-      end: cycle,
-      a: ROUTE[0],
-      b: ROUTE[0],
-      stop: "town",
-    });
+  const fleet = Math.min(
+      TRANSPORT.maxBuses,
+      Math.max(1, Math.ceil(t / interval)),
+    ),
+    cycle = Math.max(t, fleet * interval);
+  // Stretch travel, never dwell, to space arrivals evenly around the loop.
+  const dwellTotal = timeline
+    .filter((l) => l.stop)
+    .reduce((n, l) => n + l.end - l.start, 0);
+  const scale = (cycle - dwellTotal) / (t - dwellTotal);
+  let cursor = 0;
+  for (const leg of timeline) {
+    const duration = (leg.end - leg.start) * (leg.stop ? 1 : scale);
+    leg.start = cursor;
+    leg.end = cursor + duration;
+    cursor += duration;
+  }
+  interval = cycle / fleet;
+
   return { timeline, cycle, fleet, interval };
 }
 export function busAt(schedule, seconds, index) {
@@ -133,7 +147,7 @@ export function busAt(schedule, seconds, index) {
     schedule.timeline[0];
   const f = clamp((phase - leg.start) / (leg.end - leg.start), 0, 1),
     ease = f * f * (3 - 2 * f);
-  const x = leg.a[0] + (leg.b[0] - leg.a[0]) * ease,
+  let x = leg.a[0] + (leg.b[0] - leg.a[0]) * ease,
     z = leg.a[1] + (leg.b[1] - leg.a[1]) * ease;
   let yaw = Math.atan2(-(leg.b[0] - leg.a[0]), -(leg.b[1] - leg.a[1]));
   if (leg.stop) {
@@ -143,6 +157,8 @@ export function busAt(schedule, seconds, index) {
       ];
     yaw = Math.atan2(-(next.b[0] - next.a[0]), -(next.b[1] - next.a[1]));
   }
+  x += Math.cos(yaw) * 2.2;
+  z -= Math.sin(yaw) * 2.2;
   return {
     id: `bus-${index}`,
     x,
@@ -155,11 +171,14 @@ export function busAt(schedule, seconds, index) {
     departure: leg.stop ? leg.end - phase : 0,
   };
 }
-export function countdown(schedule, seconds, stopId) {
+export function countdown(schedule, seconds, stopId, excludeBoarding = false) {
   let best = Infinity;
   for (let i = 0; i < schedule.fleet; i++) {
     const bus = busAt(schedule, seconds, i);
-    if (bus.stop === stopId) return 0;
+    if (bus.stop === stopId) {
+      if (!excludeBoarding) return 0;
+      else continue;
+    }
     for (const leg of schedule.timeline) {
       if (leg.stop === stopId)
         best = Math.min(

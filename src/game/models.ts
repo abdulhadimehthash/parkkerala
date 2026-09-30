@@ -1,3 +1,4 @@
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import * as T from "three";
 import { part } from "../world";
 import { seatOffset } from "../../shared/world.js";
@@ -82,6 +83,29 @@ export function vehicleModel(kind: string, color = "#ceaa61") {
           [0.45, 0.25, 0.45],
           [0, 0, Math.PI / 2],
         );
+  }
+  const batches = new Map<T.Material, T.Mesh[]>();
+  for (const child of body.children) {
+    if (!(child instanceof T.Mesh) || child === g.userData.door) continue;
+    const list = batches.get(child.material) || [];
+    list.push(child);
+    batches.set(child.material, list);
+  }
+  for (const [material, meshes] of batches) {
+    if (meshes.length < 2) continue;
+    const geometries = meshes.map((m) => {
+      m.updateMatrix();
+      return m.geometry.clone().applyMatrix4(m.matrix);
+    });
+    const geometry = mergeGeometries(geometries, false);
+    if (geometry) {
+      const mesh = new T.Mesh(geometry, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      body.add(mesh);
+      meshes.forEach((m) => m.removeFromParent());
+    }
+    geometries.forEach((g) => g.dispose());
   }
   return g;
 }

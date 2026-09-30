@@ -1,3 +1,4 @@
+import { VOICE, HELIPADS } from "./config.js";
 // Shared deterministic geography used by rendering, movement and the game server.
 export const BOUNDS = { minX: -244, maxX: 720, minZ: -720, maxZ: 290 };
 export const TICK_RATE = 20;
@@ -6,7 +7,7 @@ export const smooth = (t) => {
   t = Math.max(0, Math.min(1, t));
   return t * t * (3 - 2 * t);
 };
-export function heightAt(x, z) {
+function naturalHeight(x, z) {
   const north = smooth((-z - 170) / 190),
     east = smooth((x - 235) / 170);
   const hills =
@@ -21,6 +22,14 @@ export function heightAt(x, z) {
       (Math.max(Math.abs(x - 459) / 90, Math.abs(z + 260) / 90) - 0.8) / 0.55,
     );
   return raw * (1 - parkBlend) + 40 * parkBlend;
+}
+export function heightAt(x, z) {
+  let h = naturalHeight(x, z);
+  for (const pad of HELIPADS) {
+    const weight = 1 - smooth((Math.hypot(x - pad.x, z - pad.z) - 14) / 12);
+    h = h * (1 - weight) + naturalHeight(pad.x, pad.z) * weight;
+  }
+  return h;
 }
 export const HILL_ROAD = [
   [150, -230],
@@ -104,33 +113,58 @@ export const ROUTE = [
   [90, 34],
   [26, 34],
 ];
+/** @type {[string,number,number][]} */
+const cars = [
+  ["car-town", 21, 54],
+  ["car-park", 584, -239],
+  ["car-village", 140, -198],
+  ["car-riverside", 137, -119],
+  ["car-hill", 326, -420],
+  ["car-valley", 518, -22],
+  ["car-residential", -30, 126],
+];
+/** @type {[string,number,number][]} */
+const bikes = [
+  ["bike-town", -19, 43],
+  ["scooter-park", 580, -280],
+  ["bike-shops", 20, 4],
+  ["bike-residential", -26, 154],
+  ["bike-fuel", 30, 108],
+  ["bike-riverside", 133, -113],
+  ["bike-village", 140, -221],
+  ["bike-hill", 322, -406],
+  ["bike-ridge", 391, -454],
+  ["bike-valley", 520, -27],
+  ["bike-east", 315, 48],
+  ["bike-park-gate", 551, -243],
+  ["bike-north", 192, -547],
+  ["bike-lakeside", 407, -238],
+];
 export const VEHICLE_SPAWNS = [
-  { id: "car-town", kind: "car", x: 21, z: 54, yaw: 0, color: "#dbb866" },
-  { id: "car-park", kind: "car", x: 584, z: -239, yaw: 0, color: "#9bbbbe" },
-  {
-    id: "bike-town",
+  ...cars.map(([id, x, z], i) => ({
+    id,
+    kind: "car",
+    x,
+    z,
+    yaw: 0,
+    color: ["#dbb866", "#9bbbbe", "#b57564"][i % 3],
+  })),
+  ...bikes.map(([id, x, z], i) => ({
+    id,
     kind: "bike",
-    x: -19,
-    z: 43,
-    yaw: -1.57,
-    color: "#af6354",
-  },
-  {
-    id: "scooter-park",
-    kind: "bike",
-    x: 580,
-    z: -280,
-    yaw: 1.57,
-    color: "#9da66e",
-  },
-  {
-    id: "helicopter",
+    x,
+    z,
+    yaw: i % 2 ? 1.57 : -1.57,
+    color: ["#af6354", "#9da66e", "#679baf"][i % 3],
+  })),
+  ...HELIPADS.map((p) => ({
+    id: p.id,
     kind: "helicopter",
-    x: 48,
-    z: 193,
+    x: p.x,
+    z: p.z,
     yaw: 0,
     color: "#507f73",
-  },
+  })),
 ];
 export function nearRoad(x, z, padding = 15) {
   return HILL_ROAD.some((a, i) => {
@@ -160,11 +194,15 @@ export function sanitizeName(value) {
     : "";
 }
 export function voiceVolume(distance) {
-  return distance <= 10
-    ? 1
-    : distance >= 40
-      ? 0
-      : Math.pow((40 - distance) / 30, 2);
+  if (distance <= VOICE.fullVolumeRadius) return 1;
+  if (distance >= VOICE.radius) return 0;
+  return (
+    1 -
+    smooth(
+      (distance - VOICE.fullVolumeRadius) /
+        (VOICE.radius - VOICE.fullVolumeRadius),
+    )
+  );
 }
 export function seatOffset(index) {
   return {

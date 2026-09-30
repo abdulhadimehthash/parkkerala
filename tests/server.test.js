@@ -80,8 +80,8 @@ test("20 unique bus seats, full rejection, stop-only exit and disconnect cleanup
   assert.notEqual(players[0].x, bus.x);
 });
 test("bus countdown decreases and every stop has scheduled open doors", () => {
-  const schedule = createBusSchedule(120);
-  assert.equal(schedule.interval, 120);
+  const schedule = createBusSchedule(30);
+  assert.equal(schedule.interval, 30);
   for (const stop of STOPS) {
     const next = countdown(schedule, 17, stop.id);
     assert.ok(Number.isFinite(next));
@@ -120,10 +120,101 @@ test("terrain is elevated and stable vehicle physics follows slopes", () => {
   assert.ok(v.z < before);
   assert.ok(Math.abs(v.speed) < 1);
 });
-test("proximity attenuation has exact silence outside 40m", () => {
-  assert.equal(voiceVolume(5), 1);
-  assert.ok(voiceVolume(20) < 1);
-  assert.ok(voiceVolume(35) < 0.05);
-  assert.equal(voiceVolume(40), 0);
-  assert.equal(voiceVolume(100), 0);
+test("100m proximity attenuation is smooth, audible at 75m and silent beyond 100m", () => {
+  const distances = [5, 25, 50, 75, 99, 100, 110];
+  const volumes = distances.map(voiceVolume);
+  assert.equal(volumes[0], 1);
+  assert.ok(volumes[1] > 0.95);
+  assert.ok(volumes[2] > 0.6);
+  assert.ok(volumes[3] > 0.1);
+  assert.ok(volumes[4] > 0 && volumes[4] < 0.002);
+  assert.equal(volumes[5], 0);
+  assert.equal(volumes[6], 0);
+  for (let i = 1; i < volumes.length; i++)
+    assert.ok(volumes[i] <= volumes[i - 1]);
+});
+
+test("curated Malayalam names preserve originals and safely fall back", () => {
+  const { game } = setup();
+  for (const [name, expected] of [
+    ["Hadi", "ഹാദി"],
+    ["Sinan", "സിനാൻ"],
+    ["Javeed", "ജാവീദ്"],
+    ["Xyqwerty", "Xyqwerty"],
+    ["ഹാദി", "ഹാദി"],
+  ]) {
+    const p = game.add(name);
+    assert.equal(p.originalUsername, name);
+    assert.equal(p.displayNameMalayalam, expected);
+  }
+});
+test("continuous arrivals stay 30 seconds apart at every stop for 30 simulated minutes", () => {
+  const schedule = createBusSchedule();
+  assert.ok(schedule.fleet > 2);
+  const arrivals = Object.fromEntries(STOPS.map((s) => [s.id, []]));
+  const previous = new Map();
+  for (let t = 0; t < 1800; t += 0.25) {
+    const buses = Array.from({ length: schedule.fleet }, (_, i) =>
+      busAt(schedule, t, i),
+    );
+    for (const b of buses) {
+      if (b.doors && previous.get(b.id) !== b.stop) arrivals[b.stop].push(t);
+      previous.set(b.id, b.stop);
+    }
+    for (let i = 0; i < buses.length; i++)
+      for (let j = i + 1; j < buses.length; j++)
+        assert.ok(
+          Math.hypot(buses[i].x - buses[j].x, buses[i].z - buses[j].z) > 4.3,
+          "buses overlap",
+        );
+  }
+  for (const [id, times] of Object.entries(arrivals)) {
+    assert.ok(times.length >= 59, id);
+    for (let i = 2; i < times.length; i++)
+      assert.ok(Math.abs(times[i] - times[i - 1] - 30) < 0.3, id);
+  }
+});
+test("full bus leaves the public world open and next bus accepts the waiting passenger", () => {
+  const { game, advance } = setup(),
+    bus = game.buses.find((b) => b.stop === "town");
+  for (let i = 0; i < 20; i++) {
+    const p = game.add("Rider " + i);
+    Object.assign(p, { x: bus.x + 4, z: bus.z });
+    game.interact(p.id, bus.id);
+  }
+  const waiting = game.add("Waiting");
+  Object.assign(waiting, { x: bus.x + 4, z: bus.z });
+  assert.throws(() => game.interact(waiting.id, bus.id), /Next bus/);
+  assert.equal(waiting.mode, "walk");
+  assert.equal(
+    game.snapshot().stops.find((s) => s.id === "town").state,
+    "full",
+  );
+  assert.equal(game.snapshot().stops.find((s) => s.id === "town").next, 30);
+  advance(30);
+  const next = game.buses.find((b) => b.stop === "town");
+  assert.notEqual(next.id, bus.id);
+  game.interact(waiting.id, next.id);
+  assert.equal(waiting.mode, "bus");
+});
+test("abandoned vehicles reset while owned vehicles remain with their driver", () => {
+  let now = 0;
+  const game = new Game({ now: () => now, respawnSeconds: 30 });
+  const v = game.vehicles[0],
+    home = { x: v.x, z: v.z };
+  v.x = 200;
+  v.z = 220;
+  now = 31000;
+  game.tick(0.05);
+  assert.equal(v.x, home.x);
+  assert.equal(v.z, home.z);
+  const p = game.add("Driver");
+  Object.assign(p, { x: v.x, z: v.z });
+  game.interact(p.id, v.id);
+  v.x = 200;
+  v.z = 220;
+  now = 62000;
+  game.tick(0.05);
+  assert.equal(v.x, 200);
+  assert.equal(v.owner, p.id);
 });

@@ -1,3 +1,4 @@
+import { MOVEMENT } from "../shared/config.js";
 import * as T from "three";
 import {
   createWorld,
@@ -48,7 +49,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 <div class="modal-backdrop hidden" id="settings-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="close" aria-label="Close settings">×</button><div class="eyebrow">MAKE YOURSELF AT HOME</div><h2 id="settings-title">Your kind of Kerala.</h2><label class="setting">Visual quality<select id="quality"><option value="balanced">Balanced</option><option value="high">High</option><option value="low">Lightweight</option></select></label><label class="setting">Camera sensitivity<input id="sensitivity" type="range" min="0.001" max="0.008" step="0.0005" value="0.003"/></label><label class="setting">Ambient sound<input id="audio-toggle" type="checkbox"/></label><div class="settings-note">WASD / arrow keys to move · Shift to sprint · Space to jump.<br/>Drag anywhere in the world to look around. Press L to lock the mouse. E interacts with transport. Esc releases it. M opens the map.<br/><br/>Points and discoveries stay for this visit.</div><label class="setting">Mute other players<input id="mute-players" type="checkbox"/></label><button class="text-button" id="voice-listen">Enable voice listening</button><p id="voice-status" class="settings-note">Microphone off. Live proximity voice only; no recording.</p><button class="text-button" id="roadmap-button">View the roadmap ↗</button><br/><br/><button class="text-button" id="respawn">Return to the town square ↗</button><button class="primary resume">Back to the world →</button></section></div>
 <div class="modal-backdrop hidden" id="map-modal"><section class="modal map-modal" role="dialog" aria-modal="true" aria-labelledby="map-title"><button class="close" aria-label="Close map">×</button><div class="eyebrow">THERE'S MORE AROUND THE CORNER</div><h2 id="map-title">A world to wander.</h2><div class="big-map-container"><canvas id="big-map" width="960" height="960"></canvas><div class="map-legend"><span>● You</span><span>✦ Places to discover</span><span>◆ Collectibles</span></div></div><p class="map-description">Follow a road. Cross a bridge. Find your favourite corner.</p></section></div>
 <div id="touch-controls" class="hidden"><div id="joystick"><div id="stick"></div></div><button id="touch-jump" aria-label="Jump">↑</button><button id="touch-sprint" aria-label="Toggle sprint">⇧</button></div>
-<div id="roadmap-modal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="roadmap-title"><button class="close" aria-label="Close roadmap">×</button><div class="eyebrow">PARK KERALA · THE JOURNEY</div><h2 id="roadmap-title">A world growing together.</h2><h3>Available in this build</h3><ul class="roadmap-list"><li>Open world & hilly roads</li><li>Sarovaram Park & lake paths</li><li>Username sessions & real players</li><li>Cars, bikes & helicopter</li><li>Shared buses & 20-seat occupancy</li><li>Proximity voice · direct WebRTC</li><li>Live map & player nameplates</li></ul><p class="settings-note">Voice needs microphone permission. Networks that block direct connections need a configured TURN relay.</p><h3>Coming next</h3><p class="settings-note">More parks and towns · boats · more bus routes · character customization · park activities · new landmarks</p></section></div><div id="error" class="hidden" role="alert"></div>`;
+<div id="roadmap-modal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="roadmap-title"><button class="close" aria-label="Close roadmap">×</button><div class="eyebrow">PARK KERALA · THE JOURNEY</div><h2 id="roadmap-title">A world growing together.</h2><h3>Available in this build</h3><ul class="roadmap-list"><li>Open world & hilly roads</li><li>Sarovaram Park & lake paths</li><li>Username sessions & real players</li><li>7 cars, 14 bikes & 4 helicopters</li><li>Continuous 30-second buses & 20 seats each</li><li>100m live voice & subtle spatial audio</li><li>Live map & Malayalam nameplates</li></ul><p class="settings-note">Voice needs microphone permission. Networks that block direct connections need a configured TURN relay.</p><h3>Coming next</h3><p class="settings-note">More parks and towns · boats · more bus routes · character customization · park activities · new landmarks</p></section></div><div id="error" class="hidden" role="alert"></div>`;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let world: WorldData, renderer: T.WebGLRenderer;
@@ -82,6 +83,11 @@ sun.shadow.bias = -0.0002;
 sun.shadow.radius = 3;
 scene.add(sun, sun.target);
 let jumpQueued = false;
+let motionX = 0,
+  motionZ = 0,
+  controlYaw = 0,
+  wasMoving = false,
+  lastManualLook = 0;
 let started = false,
   paused = false,
   ready = false,
@@ -171,6 +177,9 @@ $("respawn").onclick = () => {
   }
   social?.network.send({ type: "respawn" });
   player.group.position.copy(startPos);
+  motionX = 0;
+  motionZ = 0;
+  wasMoving = false;
   verticalSpeed = 0;
   grounded = true;
   yaw = 0;
@@ -367,6 +376,8 @@ canvas.addEventListener("pointermove", (e) => {
   lastX = e.clientX;
   lastY = e.clientY;
   yaw -= dx * sensitivity;
+  controlYaw = yaw;
+  lastManualLook = performance.now();
   pitch = T.MathUtils.clamp(pitch + dy * sensitivity, 0.12, 1.03);
 });
 canvas.addEventListener("pointerup", () => (dragging = false));
@@ -414,6 +425,7 @@ function enterWorld() {
     return;
   }
   $("username-error").textContent = "";
+  social.voice.listen();
   social.join(name);
 }
 $("enter").onclick = enterWorld;
@@ -485,30 +497,57 @@ function movePlayer(dt: number, time: number) {
       touchY;
   const length = Math.hypot(dx, dz),
     running = keys.has("ShiftLeft") || keys.has("ShiftRight") || sprint;
-  const speed = running ? 10 : 5.3;
+  const speed = running ? MOVEMENT.sprint : MOVEMENT.walk;
   const p = player.group.position;
-  if (length > 0.05) {
-    dx /= Math.max(1, length);
-    dz /= Math.max(1, length);
-    const vx = (dx * Math.cos(yaw) + dz * Math.sin(yaw)) * speed * dt,
-      vz = (-dx * Math.sin(yaw) + dz * Math.cos(yaw)) * speed * dt;
-    if (!blocked(p.x + vx, p.z, p.y)) p.x += vx;
-    if (!blocked(p.x, p.z + vz, p.y)) p.z += vz;
-    const angle = Math.atan2(-vx, -vz);
+  const moving = length > 0.05;
+  if (moving && !wasMoving) controlYaw = yaw;
+  wasMoving = moving;
+  dx /= Math.max(1, length);
+  dz /= Math.max(1, length);
+  const desiredX =
+    (dx * Math.cos(controlYaw) + dz * Math.sin(controlYaw)) * speed;
+  const desiredZ =
+    (-dx * Math.sin(controlYaw) + dz * Math.cos(controlYaw)) * speed;
+  const blend =
+    1 -
+    Math.exp(-(grounded ? MOVEMENT.acceleration : MOVEMENT.airControl) * dt);
+  // Releasing movement in the air preserves take-off momentum until landing.
+  if (grounded || moving) {
+    motionX += (desiredX - motionX) * blend;
+    motionZ += (desiredZ - motionZ) * blend;
+  }
+  const vx = motionX * dt,
+    vz = motionZ * dt;
+  if (!blocked(p.x + vx, p.z, p.y)) p.x += vx;
+  else motionX = 0;
+  if (!blocked(p.x, p.z + vz, p.y)) p.z += vz;
+  else motionZ = 0;
+  player.group.userData.sprinting = running && moving;
+  if (Math.hypot(motionX, motionZ) > 0.2) {
+    const angle = Math.atan2(-motionX, -motionZ);
     player.group.rotation.y +=
       Math.atan2(
         Math.sin(angle - player.group.rotation.y),
         Math.cos(angle - player.group.rotation.y),
       ) *
-      (1 - Math.exp(-14 * dt));
+      (1 - Math.exp(-12 * dt));
+    if (
+      moving &&
+      !dragging &&
+      !document.pointerLockElement &&
+      performance.now() - lastManualLook > 1800
+    )
+      yaw +=
+        Math.atan2(Math.sin(angle - yaw), Math.cos(angle - yaw)) *
+        (1 - Math.exp(-1.2 * dt));
   }
-  if ((jumpQueued || keys.has("Space")) && grounded) {
-    verticalSpeed = 7.8;
+  if (jumpQueued && grounded) {
+    verticalSpeed = MOVEMENT.jump;
     grounded = false;
     keys.delete("Space");
   }
   jumpQueued = false;
-  verticalSpeed -= 22 * dt;
+  verticalSpeed -= MOVEMENT.gravity * dt;
   p.y += verticalSpeed * dt;
   const floor = heightAt(p.x, p.z) + 0.25;
   if (grounded && verticalSpeed <= 0) p.y = floor;
@@ -541,7 +580,8 @@ function movePlayer(dt: number, time: number) {
     }
   }
 }
-function updateLocation(){const p=player.group.position;
+function updateLocation() {
+  const p = player.group.position;
   const area = zoneAt(p.x, p.z);
   if (area.name !== currentArea) {
     currentArea = area.name;
@@ -558,7 +598,24 @@ function updateLocation(){const p=player.group.position;
 }
 function followCamera(dt: number) {
   const p = player.group.position;
-  target.set(p.x, p.y + 1.8, p.z);
+  if (
+    social.mode !== "walk" &&
+    social.mode !== "bus" &&
+    !dragging &&
+    !document.pointerLockElement &&
+    performance.now() - lastManualLook > 1800
+  )
+    yaw +=
+      Math.atan2(
+        Math.sin(player.group.rotation.y - yaw),
+        Math.cos(player.group.rotation.y - yaw),
+      ) *
+      (1 - Math.exp(-1.3 * dt));
+  target.set(
+    p.x - Math.sin(player.group.rotation.y) * 1.2,
+    p.y + 1.8,
+    p.z - Math.cos(player.group.rotation.y) * 1.2,
+  );
   const distance =
     social?.mode === "helicopter"
       ? 22
@@ -703,10 +760,15 @@ function loop() {
       if (touchX < -0.2) driveKeys.add("KeyA");
       if (touchX > 0.2) driveKeys.add("KeyD");
     }
-    social.update(dt, elapsed, driveKeys, paused);
+    social.update(dt, elapsed, driveKeys, paused, yaw);
+    if (social.mode !== "walk") {
+      motionX = 0;
+      motionZ = 0;
+      wasMoving = false;
+    }
   }
   if (started && !paused && social.mode === "walk") movePlayer(dt, elapsed);
-  if(started)updateLocation();
+  if (started) updateLocation();
   if (started) followCamera(dt);
   else {
     camera.position.set(45 + Math.sin(elapsed * 0.035) * 3, 32, 65);
@@ -850,6 +912,7 @@ if (import.meta.env.DEV) {
         yaw,
         pitch,
         grounded,
+        velocity: [motionX, verticalSpeed, motionZ],
         points,
         area: currentArea,
         discovered: [...discovered],
@@ -863,9 +926,13 @@ if (import.meta.env.DEV) {
       teleport: (x: number, z: number, y = 0.25) => {
         player.group.position.set(x, heightAt(x, z) + y, z);
         verticalSpeed = 0;
+        motionX = 0;
+        motionZ = 0;
+        wasMoving = false;
         social?.network.send({ type: "test:teleport", x, z });
       },
       voiceStats: () => social.voice.stats(),
+      reconnect: () => social.network.socket?.close(),
       colliders: () => world.colliders.map((c) => ({ ...c })),
       setYaw: (v: number) => (yaw = v),
     },

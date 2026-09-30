@@ -1,5 +1,13 @@
+import { HELIPADS } from "../shared/config.js";
 import * as T from "three";
-import { heightAt, HILL_ROAD, STOPS, PARK, nearRoad } from "../shared/world.js";
+import {
+  heightAt,
+  HILL_ROAD,
+  STOPS,
+  PARK,
+  nearRoad,
+  VEHICLE_SPAWNS,
+} from "../shared/world.js";
 import { createTerrain, roadRibbon, samplePath } from "./world/terrain";
 import { buildParks } from "./world/parks/registry";
 
@@ -327,6 +335,14 @@ export function createWorld(): WorldData {
     fg = "#fff4d7",
     angle = 0,
   ) {
+    // Only attached shop/shelter plaques remain; remove standalone advertising boards.
+    if (
+      p.userData.center &&
+      !sub.includes("TEA GARDEN") &&
+      !sub.includes("PARK INFORMATION")
+    )
+      return new T.Mesh();
+    w = Math.min(w, 3.8);
     const canvas = document.createElement("canvas");
     canvas.width = 768;
     canvas.height = 256;
@@ -504,7 +520,7 @@ export function createWorld(): WorldData {
     box(g, "#3f5147", 0, 1.9, 3.56, 6.8, 2.9, 0.08);
     for (const xx of [-2.2, 0, 2.2])
       box(g, "#796e4e", xx, 1.5, 3.72, 0.15, 2.8, 0.12);
-    sign(g, 0, 4.45, 6.25, ml, en, 8.4, bg);
+    sign(g, 0, 4.05, 3.57, ml, en, 2.8, bg);
     box(g, "#f4e5bf", 0, 3.1, 4.85, 10, 0.16, 2.7);
     for (let i = 0; i < 10; i++)
       box(g, i % 2 ? "#e7c88c" : bg, -4.5 + i, 3.12, 4.85, 1, 0.18, 2.7);
@@ -941,13 +957,13 @@ export function createWorld(): WorldData {
   parked("bike", 8.1, 4, "#a3513f", -0.5);
   parked("bike", 8.5, -14, "#a1aaa0", -0.8);
   parked("car", -7, -54, "#e8d8ad");
-  parked("bus", 24, 36, "#b5664e", Math.PI / 2);
+
   parked("truck", -26, -62, "#83a4a0");
   parked("bike", 126, -133, "#476b60");
   parked("car", 163, -178, "#dbc59f");
   for (const [type, x, z, color, speed] of [
     ["auto", 3.2, 78, "#405347", 5],
-    ["bus", -3.3, -193, "#b96950", 6],
+    ["auto", -3.3, -193, "#b96950", 6],
     ["car", 153, 162, "#e7d6ae", 7],
     ["bike", 147, 2, "#bd7754", 6],
   ] as const) {
@@ -1174,6 +1190,11 @@ export function createWorld(): WorldData {
       z = -690 + random() * 670;
     if (
       nearRoad(x, z, 19) ||
+      VEHICLE_SPAWNS.some(
+        (v) =>
+          Math.hypot(x - Number(v.x), z - Number(v.z)) <
+          (v.kind === "helicopter" ? 30 : 9),
+      ) ||
       (Math.abs(x - PARK.x) < 105 && Math.abs(z - PARK.z) < 110)
     )
       continue;
@@ -1206,12 +1227,69 @@ export function createWorld(): WorldData {
       0.2,
     ),
   );
-  box(chunk(48, 193), "#84937a", 48, 0.18, 193, 24, 0.28, 24);
-  for (const x of [45, 51])
-    box(chunk(48, 193), "#f1e8cc", x, 0.335, 193, 0.6, 0.03, 8);
-  box(chunk(48, 193), "#f1e8cc", 48, 0.335, 193, 6, 0.03, 0.6);
-  sign(chunk(48, 193), 48, 3.3, 207, "ഹെലിപാഡ്", "PARK KERALA • HELIPAD", 9);
+  for (const pad of HELIPADS) {
+    const { x, z } = pad;
+    box(chunk(x, z), "#84937a", x, 0.12, z, 24, 0.18, 24);
+    for (const xx of [x - 3, x + 3])
+      box(chunk(x, z), "#f1e8cc", xx, 0.22, z, 0.6, 0.03, 8);
+    box(chunk(x, z), "#f1e8cc", x, 0.22, z, 6, 0.03, 0.6);
+    for (const dx of [-11, 11])
+      for (const dz of [-11, 11])
+        box(chunk(x, z), "#eac782", x + dx, 0.32, z + dz, 0.4, 0.4, 0.4);
+  }
+  root.add(
+    roadRibbon(
+      samplePath([
+        [601, -203],
+        [625, -240],
+        [634, -281],
+      ]),
+      6,
+      "#aaa58a",
+      0.18,
+    ),
+  );
+  root.add(
+    roadRibbon(
+      samplePath([
+        [335, -400],
+        [351, -441],
+        [375, -481],
+      ]),
+      6,
+      "#aaa58a",
+      0.18,
+    ),
+  );
+  root.add(
+    roadRibbon(
+      samplePath([
+        [167, -265],
+        [177, -360],
+        [190, -450],
+        [188, -566],
+      ]),
+      7,
+      "#aaa58a",
+      0.18,
+    ),
+  );
   buildParks({ root, chunk, box, tree, palm, house, sign, colliders, waters });
+  for (const v of VEHICLE_SPAWNS.filter((v) => v.kind !== "helicopter")) {
+    const x = Number(v.x),
+      z = Number(v.z);
+    root.add(
+      roadRibbon(
+        samplePath([
+          [x, z - 4],
+          [x, z + 4],
+        ]),
+        v.kind === "car" ? 5 : 3,
+        "#c2bda1",
+        0.14,
+      ),
+    );
+  }
   // Lift whole assets, never individual parts, so houses and trees retain their shape.
   for (const ch of chunks) {
     for (const child of ch.children)

@@ -1,3 +1,4 @@
+import { TRANSPORT, VOICE } from "../shared/config.js";
 import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -10,9 +11,22 @@ const app = express(),
   production = process.env.NODE_ENV === "production";
 const interval = Math.max(
   30,
-  Math.min(600, Number(process.env.BUS_INTERVAL_SECONDS) || 120),
+  Math.min(
+    600,
+    Number(process.env.BUS_STOP_TARGET_INTERVAL_SECONDS) ||
+      TRANSPORT.busStopTargetIntervalSeconds,
+  ),
 );
-const game = new Game({ interval });
+const dwell = Math.max(
+  5,
+  Math.min(10, Number(process.env.BUS_DWELL_SECONDS) || TRANSPORT.dwellSeconds),
+);
+const respawnSeconds = Math.max(
+  30,
+  Number(process.env.VEHICLE_RESPAWN_SECONDS) ||
+    TRANSPORT.abandonedVehicleSeconds,
+);
+const game = new Game({ interval, dwell, respawnSeconds });
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -25,7 +39,7 @@ app.get("/health", (_, res) =>
   res.json({
     ok: true,
     players: game.players.size,
-    version: "2.0.0",
+    version: "2.1.0",
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
   }),
 );
@@ -48,6 +62,8 @@ app.get("/api/config", (_, res) => {
     iceServers,
     turnConfigured: iceServers.length > 1,
     busInterval: interval,
+    busDwell: dwell,
+    voiceRadius: VOICE.radius,
   });
 });
 app.use(express.static(path.join(root, "dist")));
@@ -110,7 +126,7 @@ wss.on("connection", (ws, request) => {
         const p = game.add(data.name);
         id = p.id;
         sockets.set(id, ws);
-        send(ws, { type: "welcome", id, ...game.snapshot(), type: "welcome" });
+        send(ws, { ...game.snapshot(), id, type: "welcome" });
         return;
       }
       if (!id) return;
@@ -129,7 +145,11 @@ wss.on("connection", (ws, request) => {
         p.speaking = p.mic && !!data.speaking;
       } else if (data.type === "signal") {
         const to = game.players.get(data.to);
-        if (!to || Math.hypot(to.x - p.x, to.z - p.z) > 55) return;
+        if (
+          !to ||
+          Math.hypot(to.x - p.x, to.y - p.y, to.z - p.z) > VOICE.signalRadius
+        )
+          return;
         const signal = data.signal;
         if (signal && (signal.description || signal.candidate || signal.reset))
           send(sockets.get(to.id), { type: "signal", from: id, signal });

@@ -23,13 +23,18 @@ export class SocialGame {
   >();
   private boards = new Map<
     string,
-    { sprite: T.Sprite; canvas: HTMLCanvasElement; second: number }
+    {
+      sprite: T.Mesh<T.PlaneGeometry, T.MeshBasicMaterial>;
+      canvas: HTMLCanvasElement;
+      second: string;
+    }
   >();
   private sent = 0;
   private voiceAt = 0;
   private seen = 0;
   private predicted: VehicleState | null = null;
   private previousMode = "walk";
+  private sessionId = "";
   private previousId: string | null = "";
   onControls: (mode: string) => void = () => {};
   onStatus: (text: string) => void = () => {};
@@ -55,7 +60,7 @@ export class SocialGame {
       const mic = document.getElementById("microphone")!;
       mic.setAttribute("aria-pressed", String(this.voice.enabled));
       mic.classList.toggle("enabled", this.voice.enabled);
-      mic.title=this.voice.enabled?"Microphone on":"Microphone off";
+      mic.title = this.voice.enabled ? "Microphone on" : "Microphone off";
       document.getElementById("voice-status")!.textContent = message;
     };
     for (const stop of STOPS) {
@@ -64,15 +69,19 @@ export class SocialGame {
       canvas.height = 128;
       const texture = new T.CanvasTexture(canvas);
       texture.colorSpace = T.SRGBColorSpace;
-      const sprite = new T.Sprite(new T.SpriteMaterial({ map: texture }));
+      const sprite = new T.Mesh(
+        new T.PlaneGeometry(3, 0.9),
+        new T.MeshBasicMaterial({ map: texture, side: T.DoubleSide }),
+      );
+      sprite.rotation.y = Math.PI / 2;
       sprite.position.set(
-        stop.x + 11,
-        heightAt(stop.x + 11, stop.z) + 5.9,
+        stop.x + 9.2,
+        heightAt(stop.x + 11, stop.z) + 2.65,
         stop.z,
       );
-      sprite.scale.set(6.5, 1.625, 1);
+
       scene.add(sprite);
-      this.boards.set(stop.id, { sprite, canvas, second: -1 });
+      this.boards.set(stop.id, { sprite, canvas, second: "" });
     }
     void this.voice.configure();
   }
@@ -105,13 +114,26 @@ export class SocialGame {
       y: p.y,
       z: p.z,
       yaw: this.player.group.rotation.y,
+      sprinting: !!this.player.group.userData.sprinting,
       moving: this.player.legs.some((l) => Math.abs(l.rotation.x) > 0.1),
     });
   }
-  update(dt: number, time: number, keys: Set<string>, paused: boolean) {
+  update(
+    dt: number,
+    time: number,
+    keys: Set<string>,
+    paused: boolean,
+    cameraYaw = 0,
+  ) {
     const snapshot = this.network.snapshot,
       self = this.network.self;
     if (!snapshot || !self) return;
+    if (this.sessionId !== self.id) {
+      this.sessionId = self.id;
+      this.player.group.position.set(self.x, self.y, self.z);
+      this.previousMode = "";
+      this.predicted = null;
+    }
     this.mode = self.mode;
     this.vehicleId = self.vehicleId;
     if (this.mode !== this.previousMode || this.vehicleId !== this.previousId) {
@@ -154,6 +176,7 @@ export class SocialGame {
         model.position.set(v.x, v.y, v.z);
         this.models.set(v.id, model);
       }
+      model.visible = Math.hypot(v.x - self.x, v.z - self.z) < 220;
       let display = v;
       if (v.owner === self.id) {
         if (!this.predicted || fresh) {
@@ -198,9 +221,6 @@ export class SocialGame {
         this.scene.add(model);
         model.position.set(bus.x, bus.y, bus.z);
         this.models.set(bus.id, model);
-        const label = nameplate("PK • SAROVARAM LOOP");
-        label.position.y = 4.2;
-        model.add(label);
       }
       model.position.lerp(
         new T.Vector3(bus.x, bus.y, bus.z),
@@ -212,6 +232,7 @@ export class SocialGame {
           Math.cos(bus.yaw - model.rotation.y),
         ) *
         (1 - Math.exp(-13 * dt));
+      model.visible = Math.hypot(bus.x - self.x, bus.z - self.z) < 220;
       model.userData.door.visible = !bus.doors;
       if (this.mode === "bus" && bus.id === self.vehicleId) {
         const seat = worldSeat(
@@ -231,7 +252,9 @@ export class SocialGame {
       if (bus.doors)
         this.interactions.items.push({
           id: bus.id,
-          label: bus.seats.every(Boolean) ? "BUS FULL" : "ENTER BUS",
+          label: bus.seats.every(Boolean)
+            ? "BUS FULL · Next bus arriving soon."
+            : "ENTER BUS",
           x: bus.x,
           y: bus.y,
           z: bus.z,
@@ -246,12 +269,24 @@ export class SocialGame {
       let remote = this.remotes.get(p.id);
       if (!remote) {
         const avatar = person("#85b7ab", "#aa7654", true),
-          label = nameplate(p.name);
+          label = nameplate(
+            p.displayNameMalayalam || p.originalUsername || p.name,
+          );
         avatar.group.add(label);
         avatar.group.position.set(p.x, p.y, p.z);
         this.scene.add(avatar.group);
         remote = { person: avatar, label, name: p.name, state: p };
         this.remotes.set(p.id, remote);
+      }
+      if (remote.state.speaking !== p.speaking) {
+        const label = nameplate(
+          (p.speaking ? "🎤 " : "") + (p.displayNameMalayalam || p.name),
+        );
+        remote.label.removeFromParent();
+        remote.label.material.map?.dispose();
+        remote.label.material.dispose();
+        remote.label = label;
+        remote.person.group.add(label);
       }
       remote.state = p;
       remote.person.group.position.lerp(
@@ -269,7 +304,11 @@ export class SocialGame {
       remote.label.material.color.set(p.speaking ? "#b9f179" : "#ffffff");
       remote.label.scale.setScalar(p.speaking ? 1.08 : 1);
       remote.label.scale.multiply(new T.Vector3(3.4, 0.64, 1));
-      animatePerson(remote.person, time, p.moving ? 0.75 : 0);
+      animatePerson(
+        remote.person,
+        time * (p.sprinting ? 1.4 : 1),
+        p.moving ? (p.sprinting ? 1 : 0.75) : 0,
+      );
       if (p.mode === "bus")
         remote.person.legs.forEach((l) => (l.rotation.x = -Math.PI / 2));
       if (["car", "helicopter"].includes(p.mode))
@@ -284,12 +323,16 @@ export class SocialGame {
       }
     if (performance.now() - this.voiceAt > 150) {
       this.voiceAt = performance.now();
-      this.voice.update(snapshot.players, {
-        ...self,
-        x: this.player.group.position.x,
-        y: this.player.group.position.y,
-        z: this.player.group.position.z,
-      });
+      this.voice.update(
+        snapshot.players,
+        {
+          ...self,
+          x: this.player.group.position.x,
+          y: this.player.group.position.y,
+          z: this.player.group.position.z,
+        },
+        cameraYaw,
+      );
       this.updateUI();
     }
   }
@@ -316,9 +359,8 @@ export class SocialGame {
       el = document.getElementById("bus-countdown")!;
     el.classList.toggle("hidden", !stop && this.mode !== "bus");
     if (stop) {
-      const next =
-        this.network.snapshot?.stops.find((s) => s.id === stop.id)?.next ?? 0;
-      el.textContent = `${stop.name.toUpperCase()} · ${next === 0 ? "BUS AT STOP" : `NEXT BUS ${String(Math.floor(next / 60)).padStart(2, "0")}:${String(next % 60).padStart(2, "0")}`}`;
+      const info = this.network.snapshot?.stops.find((s) => s.id === stop.id);
+      el.textContent = `${stop.name.toUpperCase()} · ${this.stopMessage(info)}`;
     } else if (this.mode === "bus") {
       const b = this.network.snapshot?.buses.find(
         (b) => b.id === this.vehicleId,
@@ -328,26 +370,35 @@ export class SocialGame {
     document.getElementById("online-status")!.textContent =
       `● ${this.network.snapshot?.players.length ?? 1} ONLINE · ${this.network.name}`;
   }
+  private stopMessage(stop?: { next: number; state: string }) {
+    if (!stop) return "CONNECTING";
+    const clock = `${String(Math.floor(stop.next / 60)).padStart(2, "0")}:${String(stop.next % 60).padStart(2, "0")}`;
+    return stop.state === "boarding"
+      ? "BOARDING"
+      : stop.state === "arriving"
+        ? "ARRIVING"
+        : `${stop.state === "full" ? "BUS FULL · " : ""}NEXT BUS ${clock}`;
+  }
   private updateBoards() {
     for (const stop of this.network.snapshot?.stops ?? []) {
-      const board = this.boards.get(stop.id);
-      if (!board || board.second === stop.next) continue;
-      board.second = stop.next;
+      const board = this.boards.get(stop.id),
+        text = this.stopMessage(stop);
+      if (!board || board.second === text) continue;
+      board.second = text;
       const c = board.canvas.getContext("2d")!;
       c.fillStyle = "#244a39";
       c.fillRect(0, 0, 512, 128);
       c.fillStyle = "#f4df9b";
       c.textAlign = "center";
-      c.font = "bold 22px sans-serif";
-      c.fillText("PARK KERALA • SAROVARAM LOOP", 256, 35);
-      c.font = "bold 38px sans-serif";
+      c.font = "bold 23px sans-serif";
       c.fillText(
-        stop.next === 0
-          ? "BUS AT STOP"
-          : `NEXT BUS  ${String(Math.floor(stop.next / 60)).padStart(2, "0")}:${String(stop.next % 60).padStart(2, "0")}`,
+        (STOPS.find((s) => s.id === stop.id)?.name ?? "") + " · BUS STOP",
         256,
-        92,
+        35,
+        485,
       );
+      c.font = "bold 35px sans-serif";
+      c.fillText(text, 256, 91, 485);
       board.sprite.material.map!.needsUpdate = true;
     }
   }
@@ -405,6 +456,8 @@ export class SocialGame {
       vehicleId: this.vehicleId,
       remotePlayers: [...this.remotes.values()].map((r) => ({
         name: r.name,
+        displayName: r.state.displayNameMalayalam,
+        speaking: r.state.speaking,
         position: r.person.group.position.toArray(),
         mode: r.state.mode,
       })),

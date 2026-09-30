@@ -9,6 +9,15 @@ import {
   type WorldData,
 } from "./world";
 import "./style.css";
+import {
+  heightAt,
+  BOUNDS,
+  HILL_ROAD,
+  STOPS,
+  PARK,
+  sanitizeName,
+} from "../shared/world.js";
+import { SocialGame } from "./game/social";
 
 const palmIcon =
   '<svg viewBox="0 0 40 40" fill="none"><path d="M17 35Q24 19 20 10M20 11Q7 5 4 19M20 11Q27 1 36 10M20 11Q33 9 37 23M20 11Q12 0 6 6" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><path d="M10 35H28" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -27,26 +36,32 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 <div class="vignette"></div>
 <header class="brand"><span class="brand-icon">${palmIcon}</span><div><h1>PARK KERALA</h1><p>A LITTLE KERALA. A WORLD TO WANDER.</p></div></header>
 <div id="hud" class="hidden"><div class="score">${icons.coin}<strong id="points">0</strong><span>POINTS</span><i></i><span id="found">0 / 36</span></div></div>
-<nav class="tools" aria-label="Game controls"><span class="weather"><span class="sun">☀</span> GOLDEN HOUR</span><button id="sound" aria-label="Enable ambient sound" title="Ambient sound" aria-pressed="false">${icons.sound}<span class="sound-off"></span></button><button id="fullscreen" aria-label="Toggle fullscreen" title="Fullscreen">${icons.fullscreen}</button><button id="settings" aria-label="Open settings" title="Settings">${icons.settings}</button></nav>
+<nav class="tools" aria-label="Game controls"><span class="weather"><span class="sun">☀</span> GOLDEN HOUR</span><button id="sound" aria-label="Enable ambient sound" title="Ambient sound" aria-pressed="false">${icons.sound}<span class="sound-off"></span></button><button id="fullscreen" aria-label="Toggle fullscreen" title="Fullscreen">${icons.fullscreen}</button><button id="microphone" aria-label="Toggle microphone" title="Microphone off" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg></button><button id="settings" aria-label="Open settings" title="Settings">${icons.settings}</button></nav>
 <div class="compass" id="compass"><span>W</span><i></i><span class="active">N</span><i></i><span>E</span></div>
-<section id="welcome"><div class="eyebrow"><span></span> YOUR LITTLE ESCAPE</div><h2>Take the<br/>scenic way.</h2><p>Warm chai. Coconut skies. Roads with no hurry.<br/>A whole little Kerala, yours to explore.</p><button id="enter" disabled><span id="load-label">Growing coconut trees…</span><span class="arrow">↗</span></button><div class="load-track"><i id="progress"></i></div><div class="welcome-meta"><span>ORIGINAL OPEN WORLD</span><span>NO DESTINATION NEEDED</span></div></section>
-<div id="postcard"><div class="postcard-index">01 / 06 <span>✦</span></div><p>ചായപ്പുറം</p><h3>Greetings from<br/>Chayapuram.</h3><span class="postcard-footer">KERALA, AT YOUR OWN PACE <b>↗</b></span></div>
-<div id="location" class="hidden"><div class="location-label"><span class="live-dot"></span><span id="area-kind">THE TOWN SQUARE</span></div><h2 id="area-name">Chayapuram</h2><p><span id="area-local">ചായപ്പുറം</span><span class="sep">/</span><span id="discovered">1 of 6 places discovered</span></p></div>
+<section id="welcome"><div class="eyebrow"><span></span> YOUR LITTLE ESCAPE</div><h2>Take the<br/>scenic way.</h2><p>Warm chai. Coconut skies. A world to share.<br/>Find your people on the scenic way.</p><label class="username-label" for="username">What should we call you?</label><input id="username" maxlength="20" placeholder="Your username" autocomplete="off" aria-describedby="username-error"/><div id="username-error" role="status"></div><button id="enter" disabled><span id="load-label">Growing coconut trees…</span><span class="arrow">↗</span></button><div class="load-track"><i id="progress"></i></div><div class="welcome-meta"><span>ORIGINAL OPEN WORLD</span><span>MEET YOU OUT THERE</span></div></section>
+<div id="postcard"><div class="postcard-index">01 / 09 <span>✦</span></div><p>ചായപ്പുറം</p><h3>Greetings from<br/>Chayapuram.</h3><span class="postcard-footer">KERALA, AT YOUR OWN PACE <b>↗</b></span></div>
+<div id="location" class="hidden"><div class="location-label"><span class="live-dot"></span><span id="area-kind">THE TOWN SQUARE</span></div><h2 id="area-name">Chayapuram</h2><p><span id="area-local">ചായപ്പുറം</span><span class="sep">/</span><span id="discovered">1 of ${zones.length} places discovered</span></p></div>
 <button id="minimap-wrap" aria-label="Open world map" class="hidden"><div class="map-top"><span>THE NEIGHBOURHOOD</span>${icons.map}</div><canvas id="minimap" width="300" height="200"></canvas><div class="map-bottom"><span><i></i> YOU ARE HERE</span><span><kbd>M</kbd> MAP</span></div></button>
 <div id="controls" class="hidden"><span><kbd>W</kbd><span class="key-row"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></span><span>Move</span><i></i><kbd>SHIFT</kbd><span>Sprint</span><i></i><kbd>SPACE</kbd><span>Jump</span><i></i><span class="mouse-icon"></span><span>Drag to look</span></div>
-<div id="toast" role="status" aria-live="polite"></div>
+<div id="online-status" class="hidden"></div><button id="interaction" class="hidden"></button><div id="bus-countdown" class="hidden"></div><div id="toast" role="status" aria-live="polite"></div>
 <div id="pause-hint" class="hidden">Click the world to continue exploring</div>
-<div class="modal-backdrop hidden" id="settings-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="close" aria-label="Close settings">×</button><div class="eyebrow">MAKE YOURSELF AT HOME</div><h2 id="settings-title">Your kind of Kerala.</h2><label class="setting">Visual quality<select id="quality"><option value="balanced">Balanced</option><option value="high">High</option><option value="low">Lightweight</option></select></label><label class="setting">Camera sensitivity<input id="sensitivity" type="range" min="0.001" max="0.008" step="0.0005" value="0.003"/></label><label class="setting">Ambient sound<input id="audio-toggle" type="checkbox"/></label><div class="settings-note">WASD / arrow keys to move · Shift to sprint · Space to jump.<br/>Drag anywhere in the world to look around. Press E to lock the mouse. Esc releases it. M opens the map.<br/><br/>Points and discoveries stay for this visit.</div><button class="text-button" id="respawn">Return to the town square ↗</button><button class="primary resume">Back to the world →</button></section></div>
+<div class="modal-backdrop hidden" id="settings-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="close" aria-label="Close settings">×</button><div class="eyebrow">MAKE YOURSELF AT HOME</div><h2 id="settings-title">Your kind of Kerala.</h2><label class="setting">Visual quality<select id="quality"><option value="balanced">Balanced</option><option value="high">High</option><option value="low">Lightweight</option></select></label><label class="setting">Camera sensitivity<input id="sensitivity" type="range" min="0.001" max="0.008" step="0.0005" value="0.003"/></label><label class="setting">Ambient sound<input id="audio-toggle" type="checkbox"/></label><div class="settings-note">WASD / arrow keys to move · Shift to sprint · Space to jump.<br/>Drag anywhere in the world to look around. Press L to lock the mouse. E interacts with transport. Esc releases it. M opens the map.<br/><br/>Points and discoveries stay for this visit.</div><label class="setting">Mute other players<input id="mute-players" type="checkbox"/></label><button class="text-button" id="voice-listen">Enable voice listening</button><p id="voice-status" class="settings-note">Microphone off. Live proximity voice only; no recording.</p><button class="text-button" id="roadmap-button">View the roadmap ↗</button><br/><br/><button class="text-button" id="respawn">Return to the town square ↗</button><button class="primary resume">Back to the world →</button></section></div>
 <div class="modal-backdrop hidden" id="map-modal"><section class="modal map-modal" role="dialog" aria-modal="true" aria-labelledby="map-title"><button class="close" aria-label="Close map">×</button><div class="eyebrow">THERE'S MORE AROUND THE CORNER</div><h2 id="map-title">A world to wander.</h2><div class="big-map-container"><canvas id="big-map" width="960" height="960"></canvas><div class="map-legend"><span>● You</span><span>✦ Places to discover</span><span>◆ Collectibles</span></div></div><p class="map-description">Follow a road. Cross a bridge. Find your favourite corner.</p></section></div>
 <div id="touch-controls" class="hidden"><div id="joystick"><div id="stick"></div></div><button id="touch-jump" aria-label="Jump">↑</button><button id="touch-sprint" aria-label="Toggle sprint">⇧</button></div>
-<div id="error" class="hidden" role="alert"></div>`;
+<div id="roadmap-modal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="roadmap-title"><button class="close" aria-label="Close roadmap">×</button><div class="eyebrow">PARK KERALA · THE JOURNEY</div><h2 id="roadmap-title">A world growing together.</h2><h3>Available in this build</h3><ul class="roadmap-list"><li>Open world & hilly roads</li><li>Sarovaram Park & lake paths</li><li>Username sessions & real players</li><li>Cars, bikes & helicopter</li><li>Shared buses & 20-seat occupancy</li><li>Proximity voice · direct WebRTC</li><li>Live map & player nameplates</li></ul><p class="settings-note">Voice needs microphone permission. Networks that block direct connections need a configured TURN relay.</p><h3>Coming next</h3><p class="settings-note">More parks and towns · boats · more bus routes · character customization · park activities · new landmarks</p></section></div><div id="error" class="hidden" role="alert"></div>`;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let world: WorldData, renderer: T.WebGLRenderer;
+let social: SocialGame;
 const scene = new T.Scene();
 scene.background = new T.Color("#b4d9d3");
-scene.fog = new T.Fog("#b4d9d3", 100, 260);
-const camera = new T.PerspectiveCamera(52, innerWidth / innerHeight, 0.15, 500);
+scene.fog = new T.Fog("#b4d9d3", 190, 670);
+const camera = new T.PerspectiveCamera(
+  52,
+  innerWidth / innerHeight,
+  0.15,
+  1000,
+);
 const player = person("#e6b453", "#ad7455", true);
 player.group.position.set(0, 0.25, 29);
 scene.add(player.group);
@@ -124,6 +139,21 @@ function closeModal() {
   paused = false;
   $("world").focus();
 }
+$("microphone").onclick = () => {
+  if (!started) {
+    notice("Enter the world before enabling your microphone.");
+    return;
+  }
+  void social.voice.toggle();
+};
+$("mute-players").onchange = (e) =>
+  (social.voice.muted = (e.target as HTMLInputElement).checked);
+$("voice-listen").onclick = () => social.voice.listen();
+$("roadmap-button").onclick = () => {
+  closeModal();
+  showModal($("roadmap-modal"));
+};
+$("interaction").onclick = () => social.interact();
 $("settings").onclick = () => showModal($("settings-modal"));
 $("minimap-wrap").onclick = () => showModal($("map-modal"));
 document
@@ -135,6 +165,11 @@ document.querySelectorAll(".modal-backdrop").forEach((b) =>
   }),
 );
 $("respawn").onclick = () => {
+  if (social?.mode !== "walk") {
+    notice("Exit your vehicle before returning to town.");
+    return;
+  }
+  social?.network.send({ type: "respawn" });
   player.group.position.copy(startPos);
   verticalSpeed = 0;
   grounded = true;
@@ -263,6 +298,9 @@ const keyCodes = [
   "Space",
   "ShiftLeft",
   "ShiftRight",
+  "KeyQ",
+  "KeyR",
+  "KeyC",
 ];
 window.addEventListener("keydown", (e) => {
   if (modal) {
@@ -293,7 +331,11 @@ window.addEventListener("keydown", (e) => {
     if (e.code === "Space" && !e.repeat) jumpQueued = true;
   }
   if (e.code === "KeyM" && !e.repeat) showModal($("map-modal"));
-  if (e.code === "KeyE" && !e.repeat) $("world").requestPointerLock?.();
+  if (e.code === "KeyE" && !e.repeat) {
+    e.preventDefault();
+    social.interact();
+  }
+  if (e.code === "KeyL" && !e.repeat) $("world").requestPointerLock?.();
   if (e.code === "Escape" && !document.pointerLockElement && !e.repeat)
     showModal($("settings-modal"));
 });
@@ -331,7 +373,8 @@ canvas.addEventListener("pointerup", () => (dragging = false));
 canvas.addEventListener("pointercancel", () => (dragging = false));
 $("touch-jump").onpointerdown = (e) => {
   e.preventDefault();
-  jumpQueued = true;
+  if (social?.mode !== "walk") keys.add("Space");
+  else jumpQueued = true;
 };
 $("touch-jump").onpointerup = () => keys.delete("Space");
 $("touch-sprint").onclick = () => {
@@ -359,8 +402,26 @@ function resetStick() {
 joystick.onpointerup = resetStick;
 joystick.onpointercancel = resetStick;
 joystick.onlostpointercapture = resetStick;
-$("enter").onclick = () => {
+function enterWorld() {
   if (!ready) return;
+  const input = $<HTMLInputElement>("username");
+  const name = sanitizeName(input.value);
+  input.value = name;
+  if (!name) {
+    $("username-error").textContent =
+      "Please choose a username (up to 20 characters).";
+    input.focus();
+    return;
+  }
+  $("username-error").textContent = "";
+  social.join(name);
+}
+$("enter").onclick = enterWorld;
+$("username").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") enterWorld();
+});
+function beginSession() {
+  if (started) return;
   started = true;
   $("welcome").classList.add("exited");
   $("postcard").classList.add("exited");
@@ -371,13 +432,27 @@ $("enter").onclick = () => {
     "controls",
     "minimap-wrap",
     "touch-controls",
+    "online-status",
   ])
     $(id).classList.remove("hidden");
   canvas.focus();
-  notice("Welcome to Chayapuram. Follow your curiosity.");
-};
+  notice("Welcome to Chayapuram. Meet you on the scenic way.");
+}
+const walkingControls = $("controls").innerHTML;
+function setControls(mode: string) {
+  $("controls").innerHTML =
+    mode === "walk"
+      ? walkingControls
+      : mode === "bus"
+        ? "<span>PUBLIC BUS</span><i></i><span>Sit back. Watch Kerala go by.</span><kbd>E</kbd><span>Exit at stop</span>"
+        : mode === "helicopter"
+          ? "<kbd>W S</kbd><span>Forward / back</span><kbd>A D</kbd><span>Strafe</span><kbd>Q R</kbd><span>Turn</span><kbd>SPACE C</kbd><span>Up / down</span><kbd>E</kbd><span>Exit on ground</span>"
+          : "<kbd>W S</kbd><span>Accelerate / brake</span><kbd>A D</kbd><span>Steer</span><kbd>SPACE</kbd><span>Handbrake</span><kbd>E</kbd><span>Exit</span>";
+}
 function blocked(x: number, z: number, y: number) {
-  if (x < -244 || x > WORLD || Math.abs(z) > WORLD) return true;
+  if (x < BOUNDS.minX || x > BOUNDS.maxX || z < BOUNDS.minZ || z > BOUNDS.maxZ)
+    return true;
+  if (social?.obstructed(x, z, y)) return true;
   const radius = 0.38;
   for (const c of world.colliders) {
     if (y >= c.h + 0.12) continue;
@@ -435,7 +510,8 @@ function movePlayer(dt: number, time: number) {
   jumpQueued = false;
   verticalSpeed -= 22 * dt;
   p.y += verticalSpeed * dt;
-  const floor = 0.25;
+  const floor = heightAt(p.x, p.z) + 0.25;
+  if (grounded && verticalSpeed <= 0) p.y = floor;
   if (p.y <= floor) {
     p.y = floor;
     verticalSpeed = 0;
@@ -464,6 +540,8 @@ function movePlayer(dt: number, time: number) {
       );
     }
   }
+}
+function updateLocation(){const p=player.group.position;
   const area = zoneAt(p.x, p.z);
   if (area.name !== currentArea) {
     currentArea = area.name;
@@ -474,13 +552,21 @@ function movePlayer(dt: number, time: number) {
     $("area-name").textContent = area.name;
     $("area-local").textContent = area.local;
     $("area-kind").textContent = area.subtitle;
-    $("discovered").textContent = `${discovered.size} of 6 places discovered`;
+    $("discovered").textContent =
+      `${discovered.size} of ${zones.length} places discovered`;
   }
 }
 function followCamera(dt: number) {
   const p = player.group.position;
   target.set(p.x, p.y + 1.8, p.z);
-  const distance = 11;
+  const distance =
+    social?.mode === "helicopter"
+      ? 22
+      : social?.mode === "bus"
+        ? 17
+        : social?.mode === "car"
+          ? 14
+          : 11;
   cameraGoal.set(
     p.x + Math.sin(yaw) * distance * Math.cos(pitch),
     p.y + 2.1 + Math.sin(pitch) * distance,
@@ -492,7 +578,7 @@ function followCamera(dt: number) {
   let closest = max;
   for (const c of world.colliders) {
     if (Math.abs(c.x - p.x) > 18 || Math.abs(c.z - p.z) > 18) continue;
-    box.min.set(c.x - c.w / 2 - 0.3, 0, c.z - c.d / 2 - 0.3);
+    box.min.set(c.x - c.w / 2 - 0.3, c.base ?? 0, c.z - c.d / 2 - 0.3);
     box.max.set(c.x + c.w / 2 + 0.3, c.h + 0.25, c.z + c.d / 2 + 0.3);
     if (ray.intersectBox(box, intersection)) {
       const d = intersection.distanceTo(target);
@@ -501,6 +587,10 @@ function followCamera(dt: number) {
   }
   cameraGoal.copy(target).addScaledVector(direction, closest);
   camera.position.lerp(cameraGoal, 1 - Math.exp(-9 * dt));
+  camera.position.y = Math.max(
+    camera.position.y,
+    heightAt(camera.position.x, camera.position.z) + 1,
+  );
   camera.lookAt(target);
 }
 function drawMap(map: HTMLCanvasElement, mini: boolean) {
@@ -508,9 +598,9 @@ function drawMap(map: HTMLCanvasElement, mini: boolean) {
     w = map.width,
     h = map.height,
     p = player.group.position,
-    scale = mini ? 1.45 : w / 625,
-    cx = mini ? p.x : 0,
-    cz = mini ? p.z : 0;
+    scale = mini ? 1.45 : w / 1120,
+    cx = mini ? p.x : 220,
+    cz = mini ? p.z : -210;
   const X = (x: number) => (x - cx) * scale + w / 2,
     Z = (z: number) => (z - cz) * scale + h / 2;
   c.clearRect(0, 0, w, h);
@@ -536,6 +626,17 @@ function drawMap(map: HTMLCanvasElement, mini: boolean) {
     [-184, -6, 8, 247],
   ])
     rect(x, z, rw, rh, "#f2e4c4");
+  rect(PARK.x, PARK.z, PARK.width, PARK.depth, "#85a879");
+  rect(458, -280, 72, 49, "#80b7b2");
+  c.strokeStyle = "#efe3c4";
+  c.lineWidth = 9 * scale;
+  c.beginPath();
+  HILL_ROAD.forEach((point, i) => {
+    if (i === 0) c.moveTo(X(point[0]), Z(point[1]));
+    else c.lineTo(X(point[0]), Z(point[1]));
+  });
+  c.stroke();
+  social?.drawMap(c, X, Z, mini);
   world?.colliders.forEach((b) => {
     if (b.w > 25 || b.d > 35 || b.w < 3) return;
     rect(b.x, b.z, b.w, b.d, "#90987a");
@@ -594,7 +695,18 @@ function loop() {
     fpsTime = 0;
   }
   if (!world) return;
-  if (started && !paused) movePlayer(dt, elapsed);
+  if (started) {
+    const driveKeys = new Set(keys);
+    if (social.mode !== "walk") {
+      if (touchY < -0.2) driveKeys.add("KeyW");
+      if (touchY > 0.2) driveKeys.add("KeyS");
+      if (touchX < -0.2) driveKeys.add("KeyA");
+      if (touchX > 0.2) driveKeys.add("KeyD");
+    }
+    social.update(dt, elapsed, driveKeys, paused);
+  }
+  if (started && !paused && social.mode === "walk") movePlayer(dt, elapsed);
+  if(started)updateLocation();
   if (started) followCamera(dt);
   else {
     camera.position.set(45 + Math.sin(elapsed * 0.035) * 3, 32, 65);
@@ -604,6 +716,8 @@ function loop() {
     for (const npc of world.npcs) {
       const motion = Math.sin(elapsed * 0.32 + npc.phase);
       npc.person.group.position.z = npc.z + motion * 2;
+      npc.person.group.position.y =
+        heightAt(npc.x, npc.person.group.position.z) + 0.35;
       const moving = Math.abs(Math.cos(elapsed * 0.32 + npc.phase)) > 0.25;
       npc.person.group.rotation.y =
         Math.cos(elapsed * 0.32 + npc.phase) > 0 ? Math.PI : 0;
@@ -621,11 +735,16 @@ function loop() {
       if (t.group.position.z < t.min) t.group.position.z = t.max;
       if (t.group.position.z > t.max) t.group.position.z = t.min;
       t.group.rotation.y = positive ? 0 : Math.PI;
+      t.group.position.y =
+        heightAt(t.group.position.x, t.group.position.z) + 0.25;
     }
     world.collectibles.forEach((coin, i) => {
       if (coin.visible) {
         coin.rotation.y = elapsed * 1.3 + i;
-        coin.position.y = 1.55 + Math.sin(elapsed * 2 + i) * 0.15;
+        coin.position.y =
+          heightAt(coin.position.x, coin.position.z) +
+          1.55 +
+          Math.sin(elapsed * 2 + i) * 0.15;
       }
     });
     world.waters.forEach((w) => {
@@ -652,10 +771,10 @@ function loop() {
   for (const chunk of world.chunks) {
     chunk.visible =
       chunk.userData.center.distanceTo(started ? p : camera.position) <
-      (quality === "low" ? 165 : 250);
+      (quality === "low" ? 220 : 460);
   }
-  sun.position.set(p.x - 60, 90, p.z + 55);
-  sun.target.position.set(p.x, 0, p.z);
+  sun.position.set(p.x - 60, p.y + 90, p.z + 55);
+  sun.target.position.set(p.x, p.y, p.z);
   if (elapsed - lastMap > 0.15 && started) {
     drawMap($<HTMLCanvasElement>("minimap"), true);
     lastMap = elapsed;
@@ -684,6 +803,13 @@ async function init() {
     $("load-label").textContent = "Opening the little shops…";
     await new Promise((r) => setTimeout(r, 30));
     world = createWorld();
+    social = new SocialGame(scene, player, world.colliders, notice);
+    social.onControls = setControls;
+    social.onStatus = (status) => {
+      $("online-status").textContent = status;
+      if (status === "Online") beginSession();
+      else if (!started) $("username-error").textContent = status;
+    };
     scene.add(world.root);
     $("progress").style.width = "85%";
     await renderer.compileAsync(scene, camera);
@@ -717,6 +843,7 @@ if (import.meta.env.DEV) {
     value: {
       state: () => ({
         ready,
+        social: social?.diagnostics(),
         started,
         paused,
         position: player.group.position.toArray(),
@@ -734,15 +861,19 @@ if (import.meta.env.DEV) {
         collectibles: world?.collectibles.filter((c) => c.visible).length,
       }),
       teleport: (x: number, z: number, y = 0.25) => {
-        player.group.position.set(x, y, z);
+        player.group.position.set(x, heightAt(x, z) + y, z);
         verticalSpeed = 0;
+        social?.network.send({ type: "test:teleport", x, z });
       },
+      voiceStats: () => social.voice.stats(),
       colliders: () => world.colliders.map((c) => ({ ...c })),
       setYaw: (v: number) => (yaw = v),
     },
   });
 }
 window.addEventListener("pagehide", () => {
+  social?.voice.dispose();
+  social?.network.disconnect();
   clearInterval(birdTimer);
   audio?.close();
 });

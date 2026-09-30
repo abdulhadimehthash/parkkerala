@@ -1,0 +1,188 @@
+import express from "express";
+import { createServer } from "node:http";
+import { WebSocketServer, WebSocket } from "ws";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { Game } from "./game.js";
+import { heightAt } from "../shared/world.js";
+const app = express(),
+  server = createServer(app),
+  production = process.env.NODE_ENV === "production";
+const interval = Math.max(
+  30,
+  Math.min(600, Number(process.env.BUS_INTERVAL_SECONDS) || 120),
+);
+const game = new Game({ interval });
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "microphone=(self), camera=()");
+  next();
+});
+app.get("/health", (_, res) =>
+  res.json({
+    ok: true,
+    players: game.players.size,
+    version: "2.0.0",
+    commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
+  }),
+);
+app.get("/api/config", (_, res) => {
+  const iceServers = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  ];
+  if (
+    process.env.TURN_URL &&
+    process.env.TURN_USERNAME &&
+    process.env.TURN_CREDENTIAL
+  )
+    iceServers.push({
+      urls: process.env.TURN_URL,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL,
+    });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    iceServers,
+    turnConfigured: iceServers.length > 1,
+    busInterval: interval,
+  });
+});
+app.use(express.static(path.join(root, "dist")));
+app.use((req, res) => {
+  if (req.path.startsWith("/api/")) return res.sendStatus(404);
+  res.sendFile(path.join(root, "dist/index.html"));
+});
+const wss = new WebSocketServer({ server, path: "/world", maxPayload: 16384 });
+const sockets = new Map();
+function send(ws, data) {
+  if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
+    ws.send(JSON.stringify(data));
+}
+wss.on("connection", (ws, request) => {
+  const origin = request.headers.origin;
+  let allowed = true;
+  try {
+    if (origin) {
+      const hostname = new URL(origin).hostname;
+      allowed =
+        hostname === (request.headers.host || "").split(":")[0] ||
+        (!production && ["localhost", "127.0.0.1"].includes(hostname));
+    }
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) {
+    ws.close(1008, "Origin not allowed");
+    return;
+  }
+  if (wss.clients.size > 80) {
+    ws.close(1013, "World full");
+    return;
+  }
+  let id = null,
+    count = 0,
+    windowAt = Date.now(),
+    alive = true;
+  const timeout = setTimeout(() => {
+    if (!id) ws.close(1008, "Join required");
+  }, 10000);
+  ws.on("pong", () => (alive = true));
+  const heartbeat = setInterval(() => {
+    if (!alive) return ws.terminate();
+    alive = false;
+    ws.ping();
+  }, 20000);
+  ws.on("message", (raw) => {
+    if (Date.now() - windowAt > 1000) {
+      count = 0;
+      windowAt = Date.now();
+    }
+    if (++count > 70) return ws.close(1008, "Rate limit");
+    let data;
+    try {
+      data = JSON.parse(raw.toString());
+      if (!data || typeof data.type !== "string") return;
+      if (data.type === "join") {
+        if (id) return;
+        const p = game.add(data.name);
+        id = p.id;
+        sockets.set(id, ws);
+        send(ws, { type: "welcome", id, ...game.snapshot(), type: "welcome" });
+        return;
+      }
+      if (!id) return;
+      const p = game.players.get(id);
+      if (!p) return;
+      if (data.type === "move") game.move(id, data);
+      else if (data.type === "input") game.input(id, data);
+      else if (data.type === "interact") game.interact(id, data.target);
+      else if (data.type === "respawn") {
+        if (p.mode !== "walk")
+          throw Error("Exit your vehicle before returning to town.");
+        Object.assign(p, { x: 0, y: 0.25, z: 29, lastMove: Date.now() });
+        send(ws, { type: "correction", x: 0, y: 0.25, z: 29 });
+      } else if (data.type === "voice") {
+        p.mic = !!data.mic;
+        p.speaking = p.mic && !!data.speaking;
+      } else if (data.type === "signal") {
+        const to = game.players.get(data.to);
+        if (!to || Math.hypot(to.x - p.x, to.z - p.z) > 55) return;
+        const signal = data.signal;
+        if (signal && (signal.description || signal.candidate || signal.reset))
+          send(sockets.get(to.id), { type: "signal", from: id, signal });
+      } else if (
+        data.type === "test:teleport" &&
+        !production &&
+        process.env.ALLOW_TEST_TOOLS === "1" &&
+        [data.x, data.z].every(Number.isFinite)
+      ) {
+        Object.assign(p, {
+          x: data.x,
+          z: data.z,
+          y: heightAt(data.x, data.z) + 0.25,
+          lastMove: Date.now(),
+        });
+        send(ws, { type: "correction", x: p.x, y: p.y, z: p.z });
+      }
+    } catch (error) {
+      send(ws, {
+        type: "error",
+        message: error.message || "Unable to complete action.",
+      });
+    }
+  });
+  ws.on("close", () => {
+    clearTimeout(timeout);
+    clearInterval(heartbeat);
+    if (id) {
+      game.remove(id);
+      sockets.delete(id);
+    }
+  });
+  ws.on("error", () => {});
+});
+let ticks = 0;
+const timer = setInterval(() => {
+  game.tick(0.05);
+  if (++ticks % 2 === 0) {
+    const snapshot = game.snapshot();
+    for (const ws of sockets.values()) send(ws, snapshot);
+  }
+}, 50);
+const port = Number(process.env.PORT) || 3001;
+server.listen(port, "0.0.0.0", () =>
+  console.log(
+    `Park Kerala game server listening on ${port}; bus interval ${interval}s`,
+  ),
+);
+function shutdown() {
+  clearInterval(timer);
+  for (const ws of wss.clients) ws.close(1001, "World restarting");
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

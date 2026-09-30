@@ -1,10 +1,149 @@
-import { test, expect, Page } from '@playwright/test';
-const state=(page:Page)=>page.evaluate(()=>(window as any).__park.state());
-const teleport=(page:Page,x:number,z:number,y=.25)=>page.evaluate(({x,z,y})=>(window as any).__park.teleport(x,z,y),{x,z,y});
-async function hold(page:Page,key:string,ms:number){await page.keyboard.down(key);await page.waitForTimeout(ms);await page.keyboard.up(key);}
-async function start(page:Page){await page.goto('/');await page.waitForFunction(()=>(window as any).__park?.state().ready);await page.getByRole('button',{name:'Enter Park Kerala'}).click();await page.waitForTimeout(800);}
-test('loads the original world without browser errors',async({page})=>{const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await start(page);const s=await state(page);expect(s.started).toBeTruthy();expect(s.signsReady).toBeTruthy();expect(s.colliders).toBeGreaterThan(350);expect(s.collectibles).toBe(36);expect(s.drawCalls).toBeLessThan(650);await page.screenshot({path:'artifacts/gameplay-verified.png'});expect(errors).toEqual([]);console.log('Rendering metrics:',s);});
-test('walk, sprint, jump, gravity, mouse orbit and collectible pickup',async({page})=>{await start(page);const initial=await state(page);await hold(page,'w',900);const walked=await state(page);expect(initial.position[2]-walked.position[2]).toBeGreaterThan(3);await page.keyboard.down('Shift');await hold(page,'w',900);await page.keyboard.up('Shift');const ran=await state(page);expect(walked.position[2]-ran.position[2]).toBeGreaterThan((initial.position[2]-walked.position[2])*1.5);expect(ran.points).toBeGreaterThanOrEqual(10);expect(await page.locator('#points').innerText()).toBe(String(ran.points));await page.keyboard.press('Space');await page.waitForTimeout(180);expect((await state(page)).position[1]).toBeGreaterThan(1);expect((await state(page)).grounded).toBeFalsy();await page.waitForTimeout(1000);expect((await state(page)).position[1]).toBeCloseTo(.25);expect((await state(page)).grounded).toBeTruthy();await page.mouse.move(700,400);await page.mouse.down();await page.mouse.move(850,420,{steps:10});await page.mouse.up();expect(Math.abs((await state(page)).yaw)).toBeGreaterThan(.3);await hold(page,'d',400);expect((await state(page)).position[0]).not.toBeCloseTo(ran.position[0]);});
-test('solid shops, riverbanks, bridges, world boundaries and all areas',async({page})=>{await start(page);await teleport(page,9,-4);await hold(page,'d',1200);expect((await state(page)).position[0]).toBeLessThan(11.3);await teleport(page,25,-72);await hold(page,'w',1600);expect((await state(page)).position[2]).toBeGreaterThan(-78.3);await teleport(page,0,-70);await page.keyboard.down('Shift');await hold(page,'w',4500);await page.keyboard.up('Shift');expect((await state(page)).position[2]).toBeLessThan(-109);await teleport(page,150,-70);await page.keyboard.down('Shift');await hold(page,'w',4500);await page.keyboard.up('Shift');expect((await state(page)).position[2]).toBeLessThan(-109);await teleport(page,290,240);await hold(page,'d',500);expect((await state(page)).position[0]).toBeLessThanOrEqual(290);for(const [x,z,area] of [[145,-130,'Vellaram Village'],[150,110,'Paddy Country'],[5,-116,'Neela Backwaters'],[-205,25,'Thengu Coast'],[145,-242,'Malar Hill']] as const){await teleport(page,x,z);await page.waitForTimeout(120);expect((await state(page)).area).toBe(area);}expect((await state(page)).discovered).toHaveLength(6);});
-test('map, settings, pause, sound, quality and safe return work',async({page})=>{await start(page);await page.keyboard.press('m');await expect(page.getByRole('dialog',{name:'A world to wander.'})).toBeVisible();const before=await state(page);await hold(page,'w',250);expect((await state(page)).position).toEqual(before.position);await page.screenshot({path:'artifacts/world-map.png'});await page.keyboard.press('Escape');await page.getByRole('button',{name:'Open settings'}).click();await page.selectOption('#quality','low');await page.check('#audio-toggle');await expect(page.getByRole('button',{name:'Mute ambient sound'})).toHaveAttribute('aria-pressed','true');await page.getByRole('button',{name:'Return to the town square'}).click();expect((await state(page)).paused).toBeFalsy();expect((await state(page)).position[2]).toBeCloseTo(29);await page.getByRole('button',{name:'Open settings'}).click();await page.selectOption('#quality','balanced');await page.getByRole('button',{name:'Back to the world'}).click();});
-test('mobile layout provides touch movement controls',async({browser})=>{const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});const page=await context.newPage();await start(page);await expect(page.getByRole('button',{name:'Jump',exact:true})).toBeVisible();await page.screenshot({path:'artifacts/mobile.png'});await context.close();});
+import { test, expect, Page } from "@playwright/test";
+const state = (page: Page) =>
+  page.evaluate(() => (window as any).__park.state());
+const teleport = (page: Page, x: number, z: number, y = 0.25) =>
+  page.evaluate(({ x, z, y }) => (window as any).__park.teleport(x, z, y), {
+    x,
+    z,
+    y,
+  });
+async function hold(page: Page, key: string, ms: number) {
+  await page.keyboard.down(key);
+  await page.waitForTimeout(ms);
+  await page.keyboard.up(key);
+}
+async function start(page: Page) {
+  await page.goto("/");
+  await page.waitForFunction(() => (window as any).__park?.state().ready);
+  await page
+    .locator("#username")
+    .fill("Explorer-" + Math.random().toString(36).slice(2, 8));
+  await page.getByRole("button", { name: "Enter Park Kerala" }).click();
+  await page.waitForFunction(() => (window as any).__park.state().started);
+  await page.waitForTimeout(800);
+}
+test("loads the original world without browser errors", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await start(page);
+  const s = await state(page);
+  expect(s.started).toBeTruthy();
+  expect(s.signsReady).toBeTruthy();
+  expect(s.colliders).toBeGreaterThan(350);
+  expect(s.collectibles).toBe(36);
+  expect(s.drawCalls).toBeLessThan(650);
+  await page.screenshot({ path: "artifacts/gameplay-verified.png" });
+  expect(errors).toEqual([]);
+  console.log("Rendering metrics:", s);
+});
+test("walk, sprint, jump, gravity, mouse orbit and collectible pickup", async ({
+  page,
+}) => {
+  await start(page);
+  const initial = await state(page);
+  await hold(page, "w", 900);
+  const walked = await state(page);
+  expect(initial.position[2] - walked.position[2]).toBeGreaterThan(3);
+  await page.keyboard.down("Shift");
+  await hold(page, "w", 900);
+  await page.keyboard.up("Shift");
+  const ran = await state(page);
+  expect(walked.position[2] - ran.position[2]).toBeGreaterThan(
+    (initial.position[2] - walked.position[2]) * 1.5,
+  );
+  expect(ran.points).toBeGreaterThanOrEqual(10);
+  expect(await page.locator("#points").innerText()).toBe(String(ran.points));
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(180);
+  expect((await state(page)).position[1]).toBeGreaterThan(1);
+  expect((await state(page)).grounded).toBeFalsy();
+  await page.waitForTimeout(1000);
+  expect((await state(page)).position[1]).toBeCloseTo(0.25);
+  expect((await state(page)).grounded).toBeTruthy();
+  await page.mouse.move(700, 400);
+  await page.mouse.down();
+  await page.mouse.move(850, 420, { steps: 10 });
+  await page.mouse.up();
+  expect(Math.abs((await state(page)).yaw)).toBeGreaterThan(0.3);
+  await hold(page, "d", 400);
+  expect((await state(page)).position[0]).not.toBeCloseTo(ran.position[0]);
+});
+test("solid shops, riverbanks, bridges, world boundaries and all areas", async ({
+  page,
+}) => {
+  await start(page);
+  await teleport(page, 9, -4);
+  await hold(page, "d", 1200);
+  expect((await state(page)).position[0]).toBeLessThan(11.3);
+  await teleport(page, 25, -72);
+  await hold(page, "w", 1600);
+  expect((await state(page)).position[2]).toBeGreaterThan(-78.3);
+  await teleport(page, 0, -70);
+  await page.keyboard.down("Shift");
+  await hold(page, "w", 4500);
+  await page.keyboard.up("Shift");
+  expect((await state(page)).position[2]).toBeLessThan(-109);
+  await teleport(page, 150, -70);
+  await page.keyboard.down("Shift");
+  await hold(page, "w", 4500);
+  await page.keyboard.up("Shift");
+  expect((await state(page)).position[2]).toBeLessThan(-109);
+  await teleport(page, 719.6, 240);
+  await hold(page, "d", 500);
+  expect((await state(page)).position[0]).toBeLessThanOrEqual(720);
+  for (const [x, z, area] of [
+    [145, -130, "Vellaram Village"],
+    [150, 110, "Paddy Country"],
+    [5, -116, "Neela Backwaters"],
+    [-205, 25, "Thengu Coast"],
+    [145, -242, "Malar Hill"],
+    [459, -260, "Sarovaram Park"],
+    [335, -400, "Malar Viewpoint"],
+    [505, -39, "Eastern Valley"],
+  ] as const) {
+    await teleport(page, x, z);
+    await page.waitForTimeout(120);
+    expect((await state(page)).area).toBe(area);
+  }
+  expect((await state(page)).discovered).toHaveLength(9);
+});
+test("map, settings, pause, sound, quality and safe return work", async ({
+  page,
+}) => {
+  await start(page);
+  await page.keyboard.press("m");
+  await expect(
+    page.getByRole("dialog", { name: "A world to wander." }),
+  ).toBeVisible();
+  const before = await state(page);
+  await hold(page, "w", 250);
+  expect((await state(page)).position).toEqual(before.position);
+  await page.screenshot({ path: "artifacts/world-map.png" });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.selectOption("#quality", "low");
+  await page.check("#audio-toggle");
+  await expect(
+    page.getByRole("button", { name: "Mute ambient sound" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Return to the town square" }).click();
+  expect((await state(page)).paused).toBeFalsy();
+  expect((await state(page)).position[2]).toBeCloseTo(29);
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.selectOption("#quality", "balanced");
+  await page.getByRole("button", { name: "Back to the world" }).click();
+});
+test("mobile layout provides touch movement controls", async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  await start(page);
+  await expect(
+    page.getByRole("button", { name: "Jump", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "artifacts/mobile.png" });
+  await context.close();
+});

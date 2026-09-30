@@ -1,12 +1,17 @@
 import * as T from "three";
+import { heightAt, HILL_ROAD, STOPS, PARK, nearRoad } from "../shared/world.js";
+import { createTerrain, roadRibbon, samplePath } from "./world/terrain";
+import { buildParks } from "./world/parks/registry";
 
-export const WORLD = 290;
+export const WORLD = 720;
 export type Collider = {
   x: number;
   z: number;
   w: number;
   d: number;
   h: number;
+  base?: number;
+  water?: boolean;
 };
 export type Zone = {
   name: string;
@@ -66,7 +71,34 @@ export const zones: Zone[] = [
     subtitle: "THE SCENIC WAY HOME",
   },
 ];
+zones.push(
+  {
+    name: "Sarovaram Park",
+    local: PARK.local,
+    x: PARK.x,
+    z: PARK.z,
+    color: "#85b48b",
+    subtitle: "LAKESIDE WALKS & LITTLE WONDERS",
+  },
+  {
+    name: "Malar Viewpoint",
+    local: "മലർ മല",
+    x: 335,
+    z: -400,
+    color: "#a4b481",
+    subtitle: "KERALA, FROM ABOVE",
+  },
+  {
+    name: "Eastern Valley",
+    local: "കിഴക്കൻ താഴ്വര",
+    x: 505,
+    z: -39,
+    color: "#c4bd86",
+    subtitle: "THE LONG WAY HOME",
+  },
+);
 export function zoneAt(x: number, z: number) {
+  if (Math.abs(x - PARK.x) < 90 && Math.abs(z - PARK.z) < 95) return zones[6];
   return zones.reduce((a, b) =>
     Math.hypot(x - a.x, z - a.z) < Math.hypot(x - b.x, z - b.z) ? a : b,
   );
@@ -216,7 +248,7 @@ export function createWorld(): WorldData {
     return part(p, "box", c, [x, y, z], [w, h, d]);
   }
   // Shared ground and a road network that crosses the river at two bridges.
-  box(root, "#9cab65", 0, -0.55, 0, 600, 1, 600);
+  createTerrain(root);
   box(root, "#e7d5a5", -223, -0.01, 0, 48, 0.1, 600);
   function water(x: number, z: number, w: number, d: number) {
     const m = new T.Mesh(
@@ -252,17 +284,24 @@ export function createWorld(): WorldData {
   ])
     solid(x, -92, w, 27, 2);
   function road(x: number, z: number, w: number, d: number, mark = true) {
-    box(root, "#d8c6a0", x, 0.03, z, w + 3, 0.16, d + 3);
-    box(root, "#707b79", x, 0.14, z, w, 0.15, d);
-    if (mark) {
-      if (d > w) {
-        for (let zz = z - d / 2 + 3; zz < z + d / 2; zz += 8)
-          box(root, "#e7e5c5", x, 0.225, zz, 0.15, 0.025, 3.7);
-      } else {
-        for (let xx = x - w / 2 + 3; xx < x + w / 2; xx += 8)
-          box(root, "#e7e5c5", xx, 0.225, z, 3.7, 0.025, 0.15);
-      }
-    }
+    const points = samplePath(
+      d > w
+        ? [
+            [x, z - d / 2],
+            [x, z + d / 2],
+          ]
+        : [
+            [x - w / 2, z],
+            [x + w / 2, z],
+          ],
+    );
+    root.add(
+      roadRibbon(points, Math.min(w, d) + 3, "#d8c6a0", 0.08),
+      roadRibbon(points, Math.min(w, d)),
+    );
+    if (mark)
+      for (let i = 1; i < points.length - 1; i += 3)
+        root.add(roadRibbon(points.slice(i, i + 2), 0.15, "#e7e5c5", 0.205));
   }
   road(0, 20, 13, 560);
   road(4, 34, 438, 13);
@@ -769,17 +808,6 @@ export function createWorld(): WorldData {
     7,
     "#3f7269",
   );
-  // Hill backdrop beyond the walkable viewpoint plateau.
-  for (let i = 0; i < 15; i++) {
-    const x = -180 + i * 35;
-    part(
-      root,
-      "sphere",
-      i % 2 ? "#819c72" : "#91a67c",
-      [x, 5, -295],
-      [30, 20 + random() * 18, 32],
-    );
-  }
   const tower = chunk(184, -255);
   for (const x of [181, 187])
     for (const z of [-258, -252]) box(tower, "#8b9980", x, 5, z, 0.4, 10, 0.4);
@@ -1111,6 +1139,88 @@ export function createWorld(): WorldData {
     root.add(g);
     collectibles.push(g);
   });
+  // Expand the established world with terrain-following roads and modular destinations.
+  const hillPoints = samplePath(HILL_ROAD, 2.5);
+  root.add(
+    roadRibbon(hillPoints, 14, "#ccbe99", 0.08),
+    roadRibbon(hillPoints, 11),
+  );
+  for (let i = 1; i < hillPoints.length - 2; i += 4)
+    root.add(roadRibbon(hillPoints.slice(i, i + 2), 0.16, "#ebe3bd", 0.22));
+  for (let i = 0; i < hillPoints.length; i += 12) {
+    const [x, z] = hillPoints[i];
+    lamp(x + 8, z);
+    if (i % 24 === 0) {
+      box(chunk(x + 8, z), "#ded4b0", x + 8, 0.9, z, 0.3, 1.8, 0.3);
+    }
+  }
+  for (const stop of STOPS) {
+    busStop(stop.x + 11, stop.z, Math.PI / 2);
+    sign(
+      chunk(stop.x + 11, stop.z),
+      stop.x + 8,
+      4.4,
+      stop.z,
+      stop.local,
+      stop.name + " • BUS STOP",
+      7,
+      "#355d49",
+      "#ffebbf",
+      Math.PI / 2,
+    );
+  }
+  for (let i = 0; i < 430; i++) {
+    const x = 245 + random() * 450,
+      z = -690 + random() * 670;
+    if (
+      nearRoad(x, z, 19) ||
+      (Math.abs(x - PARK.x) < 105 && Math.abs(z - PARK.z) < 110)
+    )
+      continue;
+    if (i % 6 === 0)
+      house(x, z, 8, 7, ["#d6c89f", "#b6c4a3", "#dfbaa0"][i % 3]);
+    else if (i % 3 === 0) palm(x, z, 1);
+    else tree(x, z, 0.7 + random());
+  }
+  sign(
+    chunk(338, -400),
+    338,
+    4,
+    -411,
+    "മലർ മല",
+    "MALAR VIEWPOINT • 360° KERALA",
+    13,
+  );
+  for (let i = 0; i < 8; i++)
+    box(chunk(350, -413), "#e7d7b0", 340 + i * 2, 0.8, -418, 0.2, 1.6, 0.2);
+  box(chunk(347, -418), "#e7d7b0", 347, 1.4, -418, 16, 0.15, 0.15);
+  // Original helipad is reachable from the town's southern road.
+  root.add(
+    roadRibbon(
+      samplePath([
+        [0, 193],
+        [48, 193],
+      ]),
+      8,
+      "#88917c",
+      0.2,
+    ),
+  );
+  box(chunk(48, 193), "#84937a", 48, 0.18, 193, 24, 0.28, 24);
+  for (const x of [45, 51])
+    box(chunk(48, 193), "#f1e8cc", x, 0.335, 193, 0.6, 0.03, 8);
+  box(chunk(48, 193), "#f1e8cc", 48, 0.335, 193, 6, 0.03, 0.6);
+  sign(chunk(48, 193), 48, 3.3, 207, "ഹെലിപാഡ്", "PARK KERALA • HELIPAD", 9);
+  buildParks({ root, chunk, box, tree, palm, house, sign, colliders, waters });
+  // Lift whole assets, never individual parts, so houses and trees retain their shape.
+  for (const ch of chunks) {
+    for (const child of ch.children)
+      child.position.y += heightAt(child.position.x, child.position.z);
+  }
+  for (const c of colliders) {
+    c.base = heightAt(c.x, c.z);
+    c.h += c.base;
+  }
   // Batch static primitive geometry per spatial chunk. Signs remain separate textured planes.
   for (const ch of chunks) {
     ch.updateMatrixWorld(true);

@@ -927,3 +927,157 @@ kbd {
     display: none !important;
   }
 }
+.username-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+  color: #f0edcf;
+}
+#username {
+  display: block;
+  width: 274px;
+  padding: 14px 16px;
+  background: #f7f4dded;
+  border: 1px solid #f7e8bd70;
+  border-radius: 4px;
+  color: #2d513e;
+  outline-color: #e4d29d;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+#username-error {
+  color: #ffe4ab;
+  font-size: 11px;
+  max-width: 310px;
+  min-height: 18px;
+  margin-bottom: 6px;
+}
+#welcome {
+  bottom: 9%;
+}
+#welcome h2 {
+  font-size: clamp(55px, 5.5vw, 84px);
+  margin: 16px 0;
+}
+#welcome p {
+  margin-bottom: 18px;
+}
+#online-status {
+  position: fixed;
+  left: 40px;
+  top: 158px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #f2ebcb;
+  background: #2b4d3dba;
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+#interaction {
+  position: fixed;
+  bottom: 133px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1px solid #efdfaa8c;
+  background: #2e543fee;
+  color: #f6edcc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 15px 24px;
+  border-radius: 7px;
+  backdrop-filter: blur(10px);
+}
+#bus-countdown {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 190px;
+  background: #f5ebc9e8;
+  color: #395a43;
+  border-radius: 5px;
+  padding: 10px 17px;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+}
+.tools #microphone {
+  font-size: 23px;
+}
+.tools #microphone.enabled {
+  background: #a7c388;
+  color: #264a35;
+}
+.roadmap-list {
+  list-style: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 2;
+}
+.roadmap-list li:before {
+  content: "✓ ";
+  color: #608456;
+  margin-right: 7px;
+}
+.modal h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 24px;
+}
+#roadmap-button {
+  margin-top: 10px;
+}
+@media (max-width: 700px) {
+  #online-status {
+    left: 18px;
+    top: 115px;
+    font-size: 7px;
+    padding: 6px 9px;
+  }
+  .tools {
+    gap: 4px;
+  }
+  .tools button {
+    width: 27px;
+    height: 27px;
+  }
+  .brand {
+    gap: 4px;
+  }
+  .brand h1 {
+    font-size: 13px;
+  }
+  .brand-icon {
+    width: 23px;
+  }
+  #welcome {
+    bottom: 7%;
+  }
+  #welcome h2 {
+    font-size: 54px;
+  }
+  #interaction {
+    bottom: 250px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  #bus-countdown {
+    bottom: 302px;
+    font-size: 8px;
+    max-width: 90%;
+    text-align: center;
+  }
+  .compass {
+    left: auto;
+    right: 20px;
+    transform: none;
+    gap: 14px;
+  }
+  #controls {
+    max-width: 95vw;
+  }
+  #toast {
+    top: 150px;
+  }
+}

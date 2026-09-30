@@ -1,0 +1,129 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { Game } from "../server/game.js";
+import { heightAt, voiceVolume, sanitizeName, STOPS } from "../shared/world.js";
+import {
+  stepVehicle,
+  createBusSchedule,
+  busAt,
+  countdown,
+} from "../shared/simulation.js";
+function setup() {
+  let now = 0;
+  const game = new Game({ now: () => now });
+  return {
+    game,
+    advance: (seconds) => {
+      for (let i = 0; i < seconds * 20; i++) {
+        now += 50;
+        game.tick(0.05);
+      }
+    },
+  };
+}
+test("username validation and capacity are bounded", () => {
+  const { game } = setup();
+  assert.throws(() => game.add(" < > "));
+  assert.equal(sanitizeName("<Hadi>"), "Hadi");
+  game.add("Hadi");
+  assert.throws(() => game.add("hadi"));
+  assert.equal(sanitizeName("x".repeat(40)).length, 20);
+});
+test("only one driver can claim a vehicle and disconnect frees it", () => {
+  const { game } = setup(),
+    a = game.add("Hadi"),
+    b = game.add("Sinan"),
+    v = game.vehicles[0];
+  Object.assign(a, { x: v.x, z: v.z });
+  Object.assign(b, { x: v.x, z: v.z });
+  game.interact(a.id, v.id);
+  assert.throws(() => game.interact(b.id, v.id), /driver/);
+  game.remove(a.id);
+  game.interact(b.id, v.id);
+  assert.equal(v.owner, b.id);
+  game.input(b.id, { throttle: 1 });
+  for (let i = 0; i < 20; i++) game.tick(0.05);
+  assert.notEqual(v.z, 54);
+  game.input(b.id, { brake: true });
+  for (let i = 0; i < 30; i++) game.tick(0.05);
+  game.exit(b.id);
+  assert.equal(b.mode, "walk");
+});
+test("server rejects invalid positions, distant claims and malformed input", () => {
+  const { game } = setup(),
+    a = game.add("Hadi");
+  game.move(a.id, { x: NaN, y: 0, z: 0, yaw: 0 });
+  assert.equal(a.x, 0);
+  game.move(a.id, { x: 600, y: 1, z: -500, yaw: 0 });
+  assert.equal(a.x, 0);
+  assert.throws(() => game.interact(a.id, "car-park"), /closer/);
+  game.input(a.id, { throttle: Infinity });
+});
+test("20 unique bus seats, full rejection, stop-only exit and disconnect cleanup", () => {
+  const { game, advance } = setup(),
+    bus = game.buses.find((b) => b.stop === "town");
+  const players = [];
+  for (let i = 0; i < 21; i++) {
+    const p = game.add("Guest " + i);
+    Object.assign(p, { x: bus.x + 4, y: bus.y, z: bus.z });
+    players.push(p);
+    if (i < 20) game.interact(p.id, bus.id);
+  }
+  assert.equal(new Set(players.slice(0, 20).map((p) => p.seat)).size, 20);
+  assert.throws(() => game.interact(players[20].id, bus.id), /BUS FULL/);
+  game.remove(players[4].id);
+  game.interact(players[20].id, bus.id);
+  assert.equal(players[20].seat, 4);
+  advance(16);
+  assert.equal(game.buses.find((b) => b.id === bus.id).doors, false);
+  assert.throws(() => game.exit(players[0].id), /next bus stop/);
+  assert.notEqual(players[0].x, bus.x);
+});
+test("bus countdown decreases and every stop has scheduled open doors", () => {
+  const schedule = createBusSchedule(120);
+  assert.equal(schedule.interval, 120);
+  for (const stop of STOPS) {
+    const next = countdown(schedule, 17, stop.id);
+    assert.ok(Number.isFinite(next));
+    let found = false;
+    for (let t = 0; t < schedule.cycle; t += 0.5)
+      for (let i = 0; i < schedule.fleet; i++) {
+        const b = busAt(schedule, t, i);
+        if (b.stop === stop.id && b.doors) found = true;
+      }
+    assert.ok(found, stop.name);
+  }
+  const start = countdown(schedule, 17, "viewpoint"),
+    later = countdown(schedule, 20, "viewpoint");
+  assert.equal(start - later, 3);
+});
+test("terrain is elevated and stable vehicle physics follows slopes", () => {
+  assert.equal(heightAt(0, 0), 0);
+  assert.ok(heightAt(335, -400) > 25);
+  assert.ok(heightAt(459, -260) > 35);
+  const v = {
+    kind: "car",
+    x: 150,
+    z: -230,
+    y: heightAt(150, -230),
+    yaw: 0,
+    speed: 0,
+    pitch: 0,
+    vy: 0,
+  };
+  for (let i = 0; i < 120; i++)
+    stepVehicle(v, { throttle: 1, steer: 0 }, 0.05, []);
+  assert.equal(v.y, heightAt(v.x, v.z) + 0.25);
+  assert.ok(v.z < -245);
+  const before = v.z;
+  for (let i = 0; i < 20; i++) stepVehicle(v, { brake: true }, 0.05, []);
+  assert.ok(v.z < before);
+  assert.ok(Math.abs(v.speed) < 1);
+});
+test("proximity attenuation has exact silence outside 40m", () => {
+  assert.equal(voiceVolume(5), 1);
+  assert.ok(voiceVolume(20) < 1);
+  assert.ok(voiceVolume(35) < 0.05);
+  assert.equal(voiceVolume(40), 0);
+  assert.equal(voiceVolume(100), 0);
+});

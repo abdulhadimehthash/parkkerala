@@ -1,3 +1,5 @@
+import { FOOTBALL, inFootballArea } from "../shared/football-config.js";
+import { buildFootballTurf } from "./world/football";
 import {
   ROADS,
   MAIN_ROAD,
@@ -119,9 +121,18 @@ zones.push(
     color: "#c4bd86",
     subtitle: "THE LONG WAY HOME",
   },
+  {
+    name: "Football Turf",
+    local: "ഫുട്ബോൾ ടർഫ്",
+    x: FOOTBALL.x,
+    z: FOOTBALL.z,
+    color: "#77ba8a",
+    subtitle: "YOUR FRIENDS. YOUR GAME.",
+  },
 );
 export function zoneAt(x: number, z: number) {
-  if (Math.abs(x - PARK.x) < 90 && Math.abs(z - PARK.z) < 95) return zones[6];
+  if (Math.abs(x - PARK.x) < 90 && Math.abs(z - PARK.z) < 95)
+    return zones.find((z) => z.name === "Sarovaram Park")!;
   return zones.reduce((a, b) =>
     Math.hypot(x - a.x, z - a.z) < Math.hypot(x - b.x, z - b.z) ? a : b,
   );
@@ -1235,15 +1246,21 @@ export function createWorld(): WorldData {
       if (
         size.y > 0.4 &&
         bounds.min.y < 4 &&
-        clearRoadFootprint(center.x, center.z, size.x, size.z)
+        (clearRoadFootprint(center.x, center.z, size.x, size.z) ||
+          inFootballArea(center.x, center.z, Math.max(size.x, size.z) / 2 + 7))
       )
         child.removeFromParent();
     }
   for (let i = colliders.length - 1; i >= 0; i--) {
     const c = colliders[i];
-    if (!c.water && clearRoadFootprint(c.x, c.z, c.w, c.d))
+    if (
+      !c.water &&
+      (clearRoadFootprint(c.x, c.z, c.w, c.d) ||
+        inFootballArea(c.x, c.z, Math.max(c.w, c.d) / 2 + 7))
+    )
       colliders.splice(i, 1);
   }
+  buildFootballTurf(root, colliders);
   // Lane-normal placement: every lamp and guardrail sits beyond the shoulder.
   for (let s = 0; s < MAIN_ROAD.length; s += 32) {
     if (ROAD_STOPS.some((stop) => loopDelta(s, stop.s, MAIN_ROAD.length) < 40))

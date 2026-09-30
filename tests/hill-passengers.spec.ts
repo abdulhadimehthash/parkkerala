@@ -70,6 +70,24 @@ test("two passengers ride the pitched hill bus from viewpoint to Sarovaram", asy
         ).toBeLessThan(0.01);
         expect(person.y).toBeGreaterThan(25);
       }
+      const display = await state(p),
+        vehicle = display.social.transports.find((v: any) => v.id === bus.id),
+        remote = display.social.remotePlayers.find(
+          (r: any) => r.name === "Hill Passenger 1",
+        ),
+        passenger = display.social.snapshot.players.find(
+          (r: any) => r.name === "Hill Passenger 1",
+        );
+      if (remote && vehicle) {
+        const seat = worldSeat(vehicle, passenger.seat);
+        expect(
+          Math.hypot(
+            remote.position[0] - seat.x,
+            remote.position[1] - seat.y,
+            remote.position[2] - seat.z,
+          ),
+        ).toBeLessThan(0.015);
+      }
       await p.waitForTimeout(300);
     }
     expect(moving).toBeGreaterThan(15);

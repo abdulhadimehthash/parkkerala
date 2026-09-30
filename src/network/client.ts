@@ -1,9 +1,12 @@
+import { SnapshotBuffer } from "../../shared/interpolation.js";
 export type PlayerState = {
   id: string;
   name: string;
   originalUsername: string;
   displayNameMalayalam: string;
   sprinting: boolean;
+  grounded?: boolean;
+  animation?: string;
   x: number;
   y: number;
   z: number;
@@ -14,6 +17,8 @@ export type PlayerState = {
   seat: number | null;
   mic: boolean;
   speaking: boolean;
+  footballTeam?: string | null;
+  kickingUntil?: number;
 };
 export type VehicleState = {
   id: string;
@@ -27,6 +32,7 @@ export type VehicleState = {
   vy: number;
   owner: string | null;
   color: string;
+  inputSeq?: number;
 };
 export type BusState = {
   pitch: number;
@@ -44,6 +50,8 @@ export type BusState = {
 export type Snapshot = {
   type: string;
   time: number;
+  seq: number;
+  football?: any;
   players: PlayerState[];
   vehicles: VehicleState[];
   buses: BusState[];
@@ -51,6 +59,8 @@ export type Snapshot = {
   interval: number;
 };
 export class Network {
+  timeline = new SnapshotBuffer(150);
+  ballTimeline = new SnapshotBuffer(75);
   id = "";
   name = "";
   connected = false;
@@ -73,6 +83,7 @@ export class Network {
     this.socket = ws;
     ws.onopen = () => this.send({ type: "join", name });
     ws.onmessage = (e) => {
+      if (ws !== this.socket) return;
       let d;
       try {
         d = JSON.parse(e.data);
@@ -80,12 +91,18 @@ export class Network {
         return;
       }
       if (d.type === "welcome") {
+        this.timeline.clear();
+        this.ballTimeline.clear();
+        this.timeline.push(d, performance.now());
+        this.ballTimeline.push(d, performance.now());
         this.id = d.id;
         this.connected = true;
         this.onStatus("Online");
         this.snapshot = d;
         this.receivedAt = performance.now();
       } else if (d.type === "snapshot") {
+        if (!this.timeline.push(d, performance.now())) return;
+        this.ballTimeline.push(d, performance.now());
         this.snapshot = d;
         this.receivedAt = performance.now();
       } else if (d.type === "error") {
@@ -99,6 +116,9 @@ export class Network {
     };
     ws.onerror = () => this.onStatus("Connection unavailable");
     ws.onclose = () => {
+      if (ws !== this.socket) return;
+      this.timeline.clear();
+      this.ballTimeline.clear();
       this.connected = false;
       this.id = "";
       this.snapshot = null;

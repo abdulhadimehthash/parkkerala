@@ -244,7 +244,54 @@ test("live WebRTC audio connects nearby and becomes silent at distance", async (
         }),
     )
     .toBeTruthy();
+  console.log(
+    "Decoded voice",
+    await p.evaluate(() => (window as any).__park.voiceStats()),
+    await q.evaluate(() => (window as any).__park.voiceStats()),
+  );
+  for (const client of [p, q])
+    await expect
+      .poll(async () =>
+        client.evaluate(async () =>
+          (await (window as any).__park.voiceStats()).some(
+            (s: any) =>
+              s.decodedRms > 0.001 &&
+              s.outputRms > 0.001 &&
+              s.codec.toLowerCase() === "audio/opus",
+          ),
+        ),
+      )
+      .toBeTruthy();
+  const mic = await p.evaluate(() => (window as any).__park.microphone()[0]);
+  expect(mic.settings.echoCancellation).toBeTruthy();
+  expect(mic.settings.noiseSuppression).toBeTruthy();
+  expect(mic.settings.autoGainControl).toBeTruthy();
+  await p.evaluate(() =>
+    navigator.mediaDevices.dispatchEvent(new Event("devicechange")),
+  );
+  await expect
+    .poll(async () =>
+      p.evaluate(() => (window as any).__park.microphone()[0].id),
+    )
+    .not.toBe(mic.id);
+  await p.getByRole("button", { name: "Open settings" }).click();
+  await p.getByRole("button", { name: "Reconnect voice", exact: true }).click();
+  await p.getByRole("button", { name: "Back to the world" }).click();
   const remoteId = (await state(q)).social.id;
+  const received =
+    (await p.evaluate(() => (window as any).__park.voiceStats())).find(
+      (s: any) => s.id === remoteId,
+    )?.received ?? 0;
+  await expect
+    .poll(
+      async () =>
+        (await p.evaluate(() => (window as any).__park.voiceStats())).find(
+          (s: any) => s.id === remoteId,
+        )?.received ?? 0,
+      { timeout: 15000 },
+    )
+    .toBeGreaterThan(received);
+
   expect(
     (await state(p)).social.voice.find((v: any) => v.id === remoteId).volume,
   ).toBe(1);
@@ -316,6 +363,17 @@ test("live WebRTC audio connects nearby and becomes silent at distance", async (
     });
   await p.getByRole("button", { name: "Toggle microphone" }).click();
   expect((await state(p)).social.mic).toBeFalsy();
+  await p.getByRole("button", { name: "Toggle microphone" }).click();
+  await expect.poll(async () => (await state(p)).social.mic).toBeTruthy();
+  await expect
+    .poll(async () =>
+      p.evaluate(async () =>
+        (await (window as any).__park.voiceStats()).some(
+          (s: any) => s.decodedRms > 0.001 && s.outputRms > 0.001,
+        ),
+      ),
+    )
+    .toBeTruthy();
   await browser.close();
   rmSync(audioDir, { recursive: true, force: true });
 });

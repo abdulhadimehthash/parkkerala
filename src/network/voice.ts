@@ -10,8 +10,12 @@ type Peer = {
   source?: MediaStreamAudioSourceNode;
   gain?: GainNode;
   pan?: StereoPannerNode;
+  decoded?: AnalyserNode;
+  output?: AnalyserNode;
   disconnectedAt: number;
   createdAt: number;
+  restartCount: number;
+  restarting: boolean;
 };
 export class ProximityVoice {
   stream: MediaStream | null = null;
@@ -22,15 +26,25 @@ export class ProximityVoice {
   private servers: RTCIceServer[] = [];
   private context: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private inputSource: MediaStreamAudioSourceNode | null = null;
   private previousSpeaking = false;
   private speakingUntil = 0;
   private level = 0;
   private updated = 0;
+  private wantMicrophone = false;
+  private captureEpoch = 0;
+  private deviceChanged = () => {
+    if (this.wantMicrophone) void this.captureMicrophone();
+  };
   private joinedId = "";
   private retryAt = new Map<string, number>();
   private pendingSignals = new Map<string, Promise<void>>();
   onStatus: (message: string) => void = () => {};
   constructor(private network: Network) {
+    navigator.mediaDevices?.addEventListener(
+      "devicechange",
+      this.deviceChanged,
+    );
     network.onSignal = (id, signal) => {
       const pending = (this.pendingSignals.get(id) ?? Promise.resolve()).then(
         () => this.signal(id, signal),
@@ -53,63 +67,141 @@ export class ProximityVoice {
     }
   }
   async toggle() {
-    if (this.enabled) {
+    if (this.wantMicrophone || this.enabled) {
+      this.wantMicrophone = false;
+      this.captureEpoch++;
       this.stream?.getTracks().forEach((t) => t.stop());
       this.stream = null;
       this.enabled = false;
+      this.inputSource?.disconnect();
       this.analyser?.disconnect();
       this.analyser = null;
       for (const peer of this.peers.values())
         void peer.pc
-          .getSenders()
-          .find((s) => s.track?.kind === "audio")
-          ?.replaceTrack(null);
+          .getTransceivers()
+          .find((t) => t.receiver.track.kind === "audio")
+          ?.sender.replaceTrack(null);
       this.network.send({ type: "voice", mic: false, speaking: false });
       this.onStatus("Microphone off");
       return;
     }
+    this.wantMicrophone = true;
+    await this.captureMicrophone();
+  }
+  private async captureMicrophone() {
+    const epoch = ++this.captureEpoch;
     try {
       if (!navigator.mediaDevices?.getUserMedia)
         throw Error("Microphone requires HTTPS.");
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          channelCount: 1,
         },
         video: false,
       });
+      if (epoch !== this.captureEpoch || !this.wantMicrophone) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      const old = this.stream;
+      this.stream = stream;
       this.enabled = true;
-      this.stream.getAudioTracks()[0].onended = () => {
-        if (this.enabled) void this.toggle();
-        this.onStatus(
-          "Microphone disconnected. Reconnect a device and turn the mic on.",
-        );
+      const track = stream.getAudioTracks()[0];
+      track.contentHint = "speech";
+      track.onended = () => {
+        if (this.wantMicrophone) {
+          this.enabled = false;
+          this.network.send({ type: "voice", mic: false, speaking: false });
+          void this.captureMicrophone();
+        }
       };
       this.context ??= new AudioContext();
       await this.context.resume();
+      this.inputSource?.disconnect();
+      this.analyser?.disconnect();
       this.analyser = this.context.createAnalyser();
       this.analyser.fftSize = 256;
-      this.context.createMediaStreamSource(this.stream).connect(this.analyser);
-      for (const peer of this.peers.values()) {
-        const sender = peer.pc
+      this.inputSource = this.context.createMediaStreamSource(stream);
+      this.inputSource.connect(this.analyser);
+      for (const peer of this.peers.values())
+        await peer.pc
           .getTransceivers()
-          .find((t) => t.receiver.track.kind === "audio")?.sender;
-        await sender?.replaceTrack(this.stream.getAudioTracks()[0]);
-      }
+          .find((t) => t.receiver.track.kind === "audio")
+          ?.sender.replaceTrack(track);
+      old?.getTracks().forEach((t) => t.stop());
       this.network.send({ type: "voice", mic: true, speaking: false });
       this.onStatus("Microphone on · nearby players can hear you");
     } catch (error) {
+      if (epoch !== this.captureEpoch) return;
+      if (this.stream?.getAudioTracks().some((t) => t.readyState === "live")) {
+        this.enabled = true;
+        this.onStatus("Using the connected microphone.");
+        return;
+      }
       this.enabled = false;
-      this.onStatus(
-        error instanceof DOMException && error.name === "NotAllowedError"
-          ? "Microphone permission denied. Enable it in your browser to speak."
-          : error instanceof DOMException && error.name === "NotFoundError"
-            ? "No microphone found. Connect a microphone and try again."
-            : error instanceof Error
-              ? error.message
-              : "Microphone unavailable.",
-      );
+      this.network.send({ type: "voice", mic: false, speaking: false });
+      if (error instanceof DOMException && error.name === "NotAllowedError") {
+        this.wantMicrophone = false;
+        this.onStatus(
+          "Microphone permission denied. Enable it in your browser to speak.",
+        );
+      } else
+        this.onStatus(
+          "Microphone unavailable. Reconnect a microphone; voice will recover automatically.",
+        );
+    }
+  }
+  private preferSpeech(transceiver: RTCRtpTransceiver) {
+    const codecs = RTCRtpReceiver.getCapabilities?.("audio")?.codecs;
+    if (codecs && transceiver.setCodecPreferences) {
+      try {
+        transceiver.setCodecPreferences([
+          ...codecs.filter((c) => c.mimeType.toLowerCase() === "audio/opus"),
+          ...codecs.filter((c) => c.mimeType.toLowerCase() !== "audio/opus"),
+        ]);
+      } catch {
+        /* Keep the browser's supported fallback codecs. */
+      }
+    }
+  }
+  private async restart(id: string) {
+    const peer = this.peers.get(id);
+    if (!peer || peer.restarting) return;
+    if (peer.restartCount >= 1) {
+      this.retry(id);
+      return;
+    }
+    peer.restartCount++;
+    peer.createdAt = performance.now();
+    peer.disconnectedAt = 0;
+    peer.restarting = true;
+    try {
+      if (this.network.id < id) {
+        if (peer.pc.signalingState !== "stable") {
+          peer.restartCount--;
+          return;
+        }
+        peer.pc.restartIce();
+        const offer = await peer.pc.createOffer({ iceRestart: true });
+        await peer.pc.setLocalDescription(offer);
+        this.network.send({
+          type: "signal",
+          to: id,
+          signal: { description: peer.pc.localDescription },
+        });
+      } else
+        this.network.send({
+          type: "signal",
+          to: id,
+          signal: { restart: true },
+        });
+    } catch {
+      this.retry(id);
+    } finally {
+      peer.restarting = false;
     }
   }
   private make(id: string) {
@@ -130,10 +222,13 @@ export class ProximityVoice {
       volume: 0,
       disconnectedAt: 0,
       createdAt: performance.now(),
+      restartCount: 0,
+      restarting: false,
     };
     this.peers.set(id, peer);
     if (this.network.id < id) {
       const tr = pc.addTransceiver("audio", { direction: "sendrecv" });
+      this.preferSpeech(tr);
       if (this.stream)
         void tr.sender.replaceTrack(this.stream.getAudioTracks()[0]);
     }
@@ -161,14 +256,19 @@ export class ProximityVoice {
       if (pc.connectionState === "connected") {
         peer!.disconnectedAt = 0;
         this.retryAt.delete(id);
+        peer!.restartCount = 0;
       } else if (pc.connectionState === "disconnected")
         peer!.disconnectedAt = performance.now();
-      else if (pc.connectionState === "failed") this.retry(id);
+      else if (pc.connectionState === "failed") void this.restart(id);
     };
     return peer;
   }
   private async signal(id: string, signal: any) {
     try {
+      if (signal.restart) {
+        if (this.network.id < id) await this.restart(id);
+        return;
+      }
       if (signal.reset) {
         this.drop(id);
         this.retryAt.set(id, performance.now() + 500);
@@ -186,6 +286,7 @@ export class ProximityVoice {
             .find((t) => t.receiver.track.kind === "audio");
           if (transceiver) {
             transceiver.direction = "sendrecv";
+            this.preferSpeech(transceiver);
             await transceiver.sender.replaceTrack(
               this.stream?.getAudioTracks()[0] ?? null,
             );
@@ -235,9 +336,9 @@ export class ProximityVoice {
       }
       if (
         peer.disconnectedAt &&
-        performance.now() - peer.disconnectedAt > 8000
+        performance.now() - peer.disconnectedAt > 1800
       ) {
-        this.retry(p.id);
+        void this.restart(p.id);
         continue;
       }
       this.attachSpatial(peer);
@@ -312,9 +413,15 @@ export class ProximityVoice {
       peer.gain = this.context.createGain();
       peer.gain.gain.value = 0;
       peer.pan = this.context.createStereoPanner();
+      peer.decoded = this.context.createAnalyser();
+      peer.decoded.fftSize = 256;
+      peer.output = this.context.createAnalyser();
+      peer.output.fftSize = 256;
       peer.source
+        .connect(peer.decoded)
         .connect(peer.gain)
         .connect(peer.pan)
+        .connect(peer.output)
         .connect(this.context.destination);
       peer.audio.muted = true;
     } catch {
@@ -322,6 +429,10 @@ export class ProximityVoice {
       peer.source = undefined;
       peer.audio.muted = false;
     }
+  }
+  reconnect() {
+    for (const id of this.peers.keys()) void this.restart(id);
+    this.onStatus("Reconnecting nearby voice…");
   }
   listen() {
     this.context ??= new AudioContext();
@@ -338,11 +449,19 @@ export class ProximityVoice {
     peer.source?.disconnect();
     peer.gain?.disconnect();
     peer.pan?.disconnect();
+    peer.decoded?.disconnect();
+    peer.output?.disconnect();
     peer.audio.srcObject = null;
     peer.audio.remove();
     this.peers.delete(id);
   }
   dispose() {
+    this.wantMicrophone = false;
+    this.captureEpoch++;
+    navigator.mediaDevices?.removeEventListener(
+      "devicechange",
+      this.deviceChanged,
+    );
     this.stream?.getTracks().forEach((t) => t.stop());
     for (const id of this.peers.keys()) this.drop(id);
     void this.context?.close();
@@ -352,14 +471,41 @@ export class ProximityVoice {
     for (const [id, peer] of this.peers) {
       const stats = await peer.pc.getStats();
       let received = 0,
-        sent = 0;
+        sent = 0,
+        energy = 0,
+        packetsLost = 0,
+        jitter = 0,
+        codec = "";
       stats.forEach((r) => {
-        if (r.type === "inbound-rtp" && r.kind === "audio")
+        if (r.type === "inbound-rtp" && r.kind === "audio") {
           received += r.bytesReceived ?? 0;
+          energy += r.totalAudioEnergy ?? 0;
+          packetsLost += r.packetsLost ?? 0;
+          jitter = Math.max(jitter, r.jitter ?? 0);
+          stats.forEach((c) => {
+            if (c.id === r.codecId) codec = c.mimeType ?? codec;
+          });
+        }
         if (r.type === "outbound-rtp" && r.kind === "audio")
           sent += r.bytesSent ?? 0;
       });
-      results.push({ id, received, sent });
+      const rms = (node?: AnalyserNode) => {
+        if (!node) return 0;
+        const data = new Float32Array(node.fftSize);
+        node.getFloatTimeDomainData(data);
+        return Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length);
+      };
+      results.push({
+        id,
+        received,
+        sent,
+        energy,
+        packetsLost,
+        jitter,
+        codec,
+        decodedRms: rms(peer.decoded),
+        outputRms: rms(peer.output),
+      });
     }
     return results;
   }

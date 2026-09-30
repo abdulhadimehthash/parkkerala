@@ -34,7 +34,7 @@ The settings menu has the roadmap, graphics quality, camera sensitivity, ambient
 
 ## World and architecture
 
-The original town connects to nine named areas, including the Sarovaram Park plateau, an elevated lake promenade, tea garden, pavilion, parking, bus stop, and a winding hill road loop. Roads use one shared, rounded centerline network with explicit grades. Terrain is cut around that network, and the client and server use its actual driving surface, including bridges. Existing buildings and vegetation are raised as whole assets. Rendering uses spatial chunks, instanced primitive geometry and shared materials.
+The original town connects to ten named areas, including the Sarovaram Park plateau, an elevated lake promenade, tea garden, pavilion, parking, bus stop, and a winding hill road loop. Roads use one shared, rounded centerline network with explicit grades. Terrain is cut around that network, and the client and server use its actual driving surface, including bridges. Existing buildings and vegetation are raised as whole assets. Rendering uses spatial chunks, instanced primitive geometry and shared materials.
 
 - `src/world.ts`: original Kerala world and reusable asset builders
 - `src/world/terrain.ts`: tiled heightfield, generated road/shoulder meshes and development road overlay
@@ -49,13 +49,13 @@ The original town connects to nine named areas, including the Sarovaram Park pla
 - `server/game.js`: shared vehicle ownership, passenger seats, bus schedule and validation
 - `server/index.js`: static hosting, same-origin WebSockets, signalling and health endpoint
 
-The Node simulation runs at 20 Hz and broadcasts at 10 Hz. Clients predict driving using the same simulation and interpolate remote movement. Vehicle ownership and first-available bus seats are allocated exclusively on the server. Disconnects release occupied resources. Buses carry 20 passengers each, with configurable headways and synchronized doors/countdowns. Buses follow a deterministic timetable; other traffic remains ambient scenery.
+The Node simulation runs at 20 Hz and broadcasts at 20 Hz. Clients predict driving using the same simulation and interpolate remote movement. Vehicle ownership and first-available bus seats are allocated exclusively on the server. Disconnects release occupied resources. Buses carry 20 passengers each, with configurable headways and synchronized doors/countdowns. Buses follow a deterministic timetable; other traffic remains ambient scenery.
 
 This version uses stable arcade vehicle handling, simplified collision volumes and a bounded world, rather than a full rigid-body driving simulator. Shared state resets on server restart. Run **one server instance**; horizontal scaling requires shared room coordination and is intentionally not included.
 
 ## Voice
 
-Live browser-to-browser WebRTC audio uses distance attenuation: full volume through 20 metres, a smooth fade to 100 metres, then silence. Web Audio adds subtle camera-relative stereo panning. Leaving the nearby region closes that peer connection. Microphone permission, mute, denied permission and speaking indicators are handled locally. Neither the server nor the client records or stores conversations.
+Live browser-to-browser WebRTC audio uses distance attenuation: full volume through 25 metres, a smooth fade to 100 metres, then silence. Web Audio adds subtle camera-relative stereo panning. Leaving the nearby region closes that peer connection. Microphone permission, mute, denied permission and speaking indicators are handled locally. Neither the server nor the client records or stores conversations.
 
 Public STUN servers are configured by default. **Some networks require TURN**; provide `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` through Render environment settings for those networks. Use short-lived relay credentials where supported. Never commit real credentials. Without a relay, direct WebRTC has been tested locally and in same-network production clients; connectivity across restrictive NAT/firewalls is not guaranteed.
 
@@ -104,7 +104,7 @@ Walking uses 8.5 units/second and sprinting uses 14, with acceleration, grounded
 
 The shared world has 7 usable cars, 14 bikes and 4 helicopters spread across town, residential streets, riverside, village, park, valley and hill destinations. Helicopters have level helipads and access paths. Abandoned transport resets after the configured delay only when unoccupied and no player is close to its current or home position.
 
-The default route runs 7 lightweight timetable-driven buses with 30-second headways and 8-second dwell. Travel time is adjusted to maintain spacing without parking several buses at the terminus. Each bus has 20 exclusive passenger seats; world capacity is separately 64. Distant vehicles are hidden and static model parts are batched. Stop panels show BOARDING, ARRIVING, or BUS FULL with the next service countdown. Oversized standalone signboards are removed; small plaques remain on shops and shelters.
+The default route runs 8 lightweight timetable-driven buses with 30-second headways and 8-second dwell. Travel time is adjusted to maintain spacing without parking several buses at the terminus. Each bus has 20 exclusive passenger seats; world capacity is separately 64. Distant vehicles are hidden and static model parts are batched. Stop panels show BOARDING, ARRIVING, or BUS FULL with the next service countdown. Oversized standalone signboards are removed; small plaques remain on shops and shelters.
 
 Original usernames are retained as `originalUsername`; `displayNameMalayalam` uses a curated deterministic name dictionary, including Hadi, Sinan and Javeed. Every token must be known or the complete original name is shown. This deliberately conservative fallback avoids inventing pronunciations. Speaking nameplates add a small microphone indicator.
 
@@ -118,7 +118,7 @@ This checks HTTPS/WSS, Malayalam name metadata, public shared transport, two-way
 
 ## Road integrity
 
-The main route is a continuous 2 km loop with rounded turns, a 12 m roadway, six roadside stops and widened pull-in bays. The same arc-length path generates roads, bus motion, minimap, clearance zones and roadside lamps. Branches blend into the primary road at junctions. Terrain tiles have finer resolution near roads and are cut to the corridor before surrounding slopes blend into the natural hills.
+The main route is a continuous 2 km loop with rounded turns, a 12 m roadway, seven roadside stops and widened pull-in bays. The same arc-length path generates roads, bus motion, minimap, clearance zones and roadside lamps. Branches blend into the primary road at junctions. Terrain tiles have finer resolution near roads and are cut to the corridor before surrounding slopes blend into the natural hills.
 
 Vehicle height comes from the road surface, including graded bridge decks. Pitch uses front/rear contact points; root height accounts for the actual model wheel hub and tyre radius at every wheel. Passenger seats use the bus pitch transform. Buses ease into bays and maintain their timetable through curves; a state-recovery guard handles invalid positions as a fallback.
 
@@ -134,4 +134,26 @@ node tests/road-surfaces.mjs
 node tests/drive-network.mjs
 ```
 
-These validate every road grade, sampled lane clearance, bridge tyre contact, seven buses over four complete loops, recovery, and full car/bike traversals. The surface check casts rays against actual rendered road and terrain triangles throughout the network. The driving check uses two real browser sessions and ordinary W/A/S/D/brake controls for a complete loop each; it only teleports the pedestrians to their parked vehicles during setup.
+These validate every road grade, sampled lane clearance, bridge tyre contact, eight buses over four complete loops, recovery, and full car/bike traversals. The surface check casts rays against actual rendered road and terrain triangles throughout the network. The driving check uses two real browser sessions and ordinary W/A/S/D/brake controls for a complete loop each; it only teleports the pedestrians to their parked vehicles during setup.
+
+## Smooth multiplayer and football
+
+The server broadcasts at 20 Hz and clients send movement/input at 20 Hz. Remote players and transport use a timestamped 150 ms snapshot buffer, short bounded extrapolation and stale-sequence rejection. Walking snapshots include velocity to avoid duplicate-position stalls between input and server ticks. Local walking remains immediate; driven vehicles predict input locally and reconcile acknowledged commands gradually. Bus passengers use the same rendered bus and local seat transform. Football uses a separate 75 ms playback buffer.
+
+The football turf is south of the town helipad, connected to the road and parking by its west entrance. The Football Turf bus stop maintains the existing 30-second headway; eight buses now cover the seven stops. **J** joins a balanced team, **F** kicks, and **Space** still jumps. The nearby scoreboard also has Blue/Amber join, leave and kick buttons for touch controls. Each team has five slots; a five-minute match starts when both teams are represented. A lone player can practise. The server validates kicks and owns ball motion, friction, boundaries, complete goal-line crossings, score and four-second kickoff resets. No accounts or match database are needed.
+
+Voice requests echo cancellation, noise suppression and automatic gain control, prefers supported Opus, recovers microphone device changes, attempts ICE restart and falls back to peer recreation. Settings include **Reconnect voice**. Automated audio tests verify decoded samples reaching the output, both directions, attenuation, device replacement and reconnect; a TURN relay remains necessary for some restrictive networks.
+
+Additional verification:
+
+```sh
+STAGE=release node tests/jitter-probe.mjs
+node tests/stress.mjs
+PARK_PUBLIC=1 PARK_URL=https://parkkerala.online node tests/drive-network.mjs
+```
+
+The jitter probe deliberately delays, drops and reorders incoming snapshots. The load probe uses four actual browser clients plus four lightweight simulated clients locally. Public driving uses ordinary walking and vehicle controls with no development teleports.
+
+See `DEVELOPMENT_AUDIT.md` for the release checklist and measured evidence.
+
+Voice API references: [supported codec preferences](https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpTransceiver/setCodecPreferences) and [ICE restart](https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/restartIce).

@@ -1,3 +1,4 @@
+import { FOOTBALL, inFootballArea } from "../shared/football-config.js";
 import {
   ROADS,
   MAIN_ROAD,
@@ -51,16 +52,17 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 <nav class="tools" aria-label="Game controls"><span class="weather"><span class="sun">☀</span> GOLDEN HOUR</span><button id="sound" aria-label="Enable ambient sound" title="Ambient sound" aria-pressed="false">${icons.sound}<span class="sound-off"></span></button><button id="fullscreen" aria-label="Toggle fullscreen" title="Fullscreen">${icons.fullscreen}</button><button id="microphone" aria-label="Toggle microphone" title="Microphone off" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg></button><button id="settings" aria-label="Open settings" title="Settings">${icons.settings}</button></nav>
 <div class="compass" id="compass"><span>W</span><i></i><span class="active">N</span><i></i><span>E</span></div>
 <section id="welcome"><div class="eyebrow"><span></span> YOUR LITTLE ESCAPE</div><h2>Take the<br/>scenic way.</h2><p>Warm chai. Coconut skies. A world to share.<br/>Find your people on the scenic way.</p><label class="username-label" for="username">What should we call you?</label><input id="username" maxlength="20" placeholder="Your username" autocomplete="off" aria-describedby="username-error"/><div id="username-error" role="status"></div><button id="enter" disabled><span id="load-label">Growing coconut trees…</span><span class="arrow">↗</span></button><div class="load-track"><i id="progress"></i></div><div class="welcome-meta"><span>ORIGINAL OPEN WORLD</span><span>MEET YOU OUT THERE</span></div></section>
-<div id="postcard"><div class="postcard-index">01 / 09 <span>✦</span></div><p>ചായപ്പുറം</p><h3>Greetings from<br/>Chayapuram.</h3><span class="postcard-footer">KERALA, AT YOUR OWN PACE <b>↗</b></span></div>
+<div id="postcard"><div class="postcard-index">01 / 10 <span>✦</span></div><p>ചായപ്പുറം</p><h3>Greetings from<br/>Chayapuram.</h3><span class="postcard-footer">KERALA, AT YOUR OWN PACE <b>↗</b></span></div>
 <div id="location" class="hidden"><div class="location-label"><span class="live-dot"></span><span id="area-kind">THE TOWN SQUARE</span></div><h2 id="area-name">Chayapuram</h2><p><span id="area-local">ചായപ്പുറം</span><span class="sep">/</span><span id="discovered">1 of ${zones.length} places discovered</span></p></div>
 <button id="minimap-wrap" aria-label="Open world map" class="hidden"><div class="map-top"><span>THE NEIGHBOURHOOD</span>${icons.map}</div><canvas id="minimap" width="300" height="200"></canvas><div class="map-bottom"><span><i></i> YOU ARE HERE</span><span><kbd>M</kbd> MAP</span></div></button>
 <div id="controls" class="hidden"><span><kbd>W</kbd><span class="key-row"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></span><span>Move</span><i></i><kbd>SHIFT</kbd><span>Sprint</span><i></i><kbd>SPACE</kbd><span>Jump</span><i></i><span class="mouse-icon"></span><span>Drag to look</span></div>
 <div id="online-status" class="hidden"></div><button id="interaction" class="hidden"></button><div id="bus-countdown" class="hidden"></div><div id="toast" role="status" aria-live="polite"></div>
 <div id="pause-hint" class="hidden">Click the world to continue exploring</div>
-<div class="modal-backdrop hidden" id="settings-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="close" aria-label="Close settings">×</button><div class="eyebrow">MAKE YOURSELF AT HOME</div><h2 id="settings-title">Your kind of Kerala.</h2><label class="setting">Visual quality<select id="quality"><option value="balanced">Balanced</option><option value="high">High</option><option value="low">Lightweight</option></select></label><label class="setting">Camera sensitivity<input id="sensitivity" type="range" min="0.001" max="0.008" step="0.0005" value="0.003"/></label><label class="setting">Ambient sound<input id="audio-toggle" type="checkbox"/></label><div class="settings-note">WASD / arrow keys to move · Shift to sprint · Space to jump.<br/>Drag anywhere in the world to look around. Press L to lock the mouse. E interacts with transport. Esc releases it. M opens the map.<br/><br/>Points and discoveries stay for this visit.</div><label class="setting">Mute other players<input id="mute-players" type="checkbox"/></label><button class="text-button" id="voice-listen">Enable voice listening</button><p id="voice-status" class="settings-note">Microphone off. Live proximity voice only; no recording.</p><button class="text-button" id="roadmap-button">View the roadmap ↗</button><br/><br/><button class="text-button" id="respawn">Return to the town square ↗</button><button class="primary resume">Back to the world →</button></section></div>
+<div class="modal-backdrop hidden" id="settings-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button class="close" aria-label="Close settings">×</button><div class="eyebrow">MAKE YOURSELF AT HOME</div><h2 id="settings-title">Your kind of Kerala.</h2><label class="setting">Visual quality<select id="quality"><option value="balanced">Balanced</option><option value="high">High</option><option value="low">Lightweight</option></select></label><label class="setting">Camera sensitivity<input id="sensitivity" type="range" min="0.001" max="0.008" step="0.0005" value="0.003"/></label><label class="setting">Ambient sound<input id="audio-toggle" type="checkbox"/></label><div class="settings-note">WASD / arrow keys to move · Shift to sprint · Space to jump.<br/>Drag anywhere in the world to look around. Press L to lock the mouse. E interacts with transport. Esc releases it. M opens the map.<br/><br/>Points and discoveries stay for this visit.</div><label class="setting">Mute other players<input id="mute-players" type="checkbox"/></label><button class="text-button" id="voice-listen">Enable voice listening</button><button class="text-button" id="voice-reconnect">Reconnect voice</button><p id="voice-status" class="settings-note">Microphone off. Live proximity voice only; no recording.</p><button class="text-button" id="roadmap-button">View the roadmap ↗</button><br/><br/><button class="text-button" id="respawn">Return to the town square ↗</button><button class="primary resume">Back to the world →</button></section></div>
+<section id="football-hud" class="football-hud hidden" aria-label="Football match"><span class="football-title">PARK KERALA TURF</span><strong id="football-score">BLUE 0 — 0 AMBER</strong><span id="football-clock">Join a team to play</span><div class="football-actions"><button id="football-blue">Join Blue</button><button id="football-amber">Join Amber</button><button id="football-leave" class="hidden">Leave match</button><button id="football-kick">Kick [F]</button></div><small>F kick · J join · Space jump</small></section>
 <div class="modal-backdrop hidden" id="map-modal"><section class="modal map-modal" role="dialog" aria-modal="true" aria-labelledby="map-title"><button class="close" aria-label="Close map">×</button><div class="eyebrow">THERE'S MORE AROUND THE CORNER</div><h2 id="map-title">A world to wander.</h2><div class="big-map-container"><canvas id="big-map" width="960" height="960"></canvas><div class="map-legend"><span>● You</span><span>✦ Places to discover</span><span>◆ Collectibles</span></div></div><p class="map-description">Follow a road. Cross a bridge. Find your favourite corner.</p></section></div>
 <div id="touch-controls" class="hidden"><div id="joystick"><div id="stick"></div></div><button id="touch-jump" aria-label="Jump">↑</button><button id="touch-sprint" aria-label="Toggle sprint">⇧</button></div>
-<div id="roadmap-modal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="roadmap-title"><button class="close" aria-label="Close roadmap">×</button><div class="eyebrow">PARK KERALA · THE JOURNEY</div><h2 id="roadmap-title">A world growing together.</h2><h3>Available in this build</h3><ul class="roadmap-list"><li>Open world & hilly roads</li><li>Sarovaram Park & lake paths</li><li>Username sessions & real players</li><li>7 cars, 14 bikes & 4 helicopters</li><li>Continuous 30-second buses & 20 seats each</li><li>100m live voice & subtle spatial audio</li><li>Live map & Malayalam nameplates</li></ul><p class="settings-note">Voice needs microphone permission. Networks that block direct connections need a configured TURN relay.</p><h3>Coming next</h3><p class="settings-note">More parks and towns · boats · more bus routes · character customization · park activities · new landmarks</p></section></div><div id="error" class="hidden" role="alert"></div>`;
+<div id="roadmap-modal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="roadmap-title"><button class="close" aria-label="Close roadmap">×</button><div class="eyebrow">PARK KERALA · THE JOURNEY</div><h2 id="roadmap-title">A world growing together.</h2><h3>Available in this build</h3><ul class="roadmap-list"><li>Open world & hilly roads</li><li>Sarovaram Park & lake paths</li><li>Username sessions & real players</li><li>7 cars, 14 bikes & 4 helicopters</li><li>Continuous 30-second buses & 20 seats each</li><li>100m live voice & subtle spatial audio</li><li>Live map & Malayalam nameplates</li><li>Football turf, 5v5 teams & shared scoring</li></ul><p class="settings-note">Voice needs microphone permission. Networks that block direct connections need a configured TURN relay.</p><h3>Coming next</h3><p class="settings-note">More parks and towns · boats · more bus routes · character customization · park activities · new landmarks</p></section></div><div id="error" class="hidden" role="alert"></div>`;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let world: WorldData, renderer: T.WebGLRenderer;
@@ -166,6 +168,11 @@ $("microphone").onclick = () => {
 $("mute-players").onchange = (e) =>
   (social.voice.muted = (e.target as HTMLInputElement).checked);
 $("voice-listen").onclick = () => social.voice.listen();
+$("voice-reconnect").onclick = () => social.voice.reconnect();
+$("football-blue").onclick = () => social.footballAction("join", "A");
+$("football-amber").onclick = () => social.footballAction("join", "B");
+$("football-leave").onclick = () => social.footballAction("leave");
+$("football-kick").onclick = () => social.footballAction("kick");
 $("roadmap-button").onclick = () => {
   closeModal();
   showModal($("roadmap-modal"));
@@ -349,6 +356,14 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     keys.add(e.code);
     if (e.code === "Space" && !e.repeat) jumpQueued = true;
+  }
+  if (e.code === "KeyF" && !e.repeat) {
+    e.preventDefault();
+    social.footballAction("kick");
+  }
+  if (e.code === "KeyJ" && !e.repeat) {
+    e.preventDefault();
+    social.footballAction("join");
   }
   if (e.code === "KeyM" && !e.repeat) showModal($("map-modal"));
   if (e.code === "KeyE" && !e.repeat) {
@@ -567,11 +582,19 @@ function movePlayer(dt: number, time: number) {
     verticalSpeed = 0;
     grounded = true;
   }
+  player.group.userData.grounded = grounded;
+  player.group.userData.velocity = [motionX, verticalSpeed, motionZ];
+  player.group.userData.moving = moving && Math.hypot(motionX, motionZ) > 0.2;
   animatePerson(
     player,
     time * (running ? 1.4 : 1),
     grounded && length > 0.05 ? (running ? 1 : 0.72) : 0,
   );
+  if (
+    (social.network.self?.kickingUntil ?? 0) >
+    (social.network.snapshot?.time ?? Infinity)
+  )
+    player.legs[0].rotation.x = -1.1;
   for (const coin of world.collectibles) {
     if (
       coin.visible &&
@@ -695,6 +718,25 @@ function drawMap(map: HTMLCanvasElement, mini: boolean) {
       else c.moveTo(X(p.x), Z(p.z));
     });
     c.stroke();
+  }
+  rect(FOOTBALL.x, FOOTBALL.z, FOOTBALL.width, FOOTBALL.length, "#418555");
+  c.strokeStyle = "#f3ecd4";
+  c.lineWidth = 1;
+  c.strokeRect(
+    X(FOOTBALL.x - FOOTBALL.width / 2),
+    Z(FOOTBALL.z - FOOTBALL.length / 2),
+    FOOTBALL.width * scale,
+    FOOTBALL.length * scale,
+  );
+  c.beginPath();
+  c.arc(X(FOOTBALL.x), Z(FOOTBALL.z), 8 * scale, 0, Math.PI * 2);
+  c.stroke();
+  const match = social?.network.snapshot?.football;
+  if (match) {
+    c.fillStyle = "#fff8e2";
+    c.beginPath();
+    c.arc(X(match.ball.x), Z(match.ball.z), mini ? 2 : 3, 0, Math.PI * 2);
+    c.fill();
   }
   social?.drawMap(c, X, Z, mini);
   world?.colliders.forEach((b) => {
@@ -981,6 +1023,12 @@ if (import.meta.env.DEV) {
         return { ...f, ...groundPose(f.x, f.z, f.yaw, "car") };
       },
       voiceStats: () => social.voice.stats(),
+      microphone: () =>
+        social.voice.stream?.getAudioTracks().map((t) => ({
+          id: t.id,
+          settings: t.getSettings(),
+          readyState: t.readyState,
+        })),
       reconnect: () => social.network.socket?.close(),
       colliders: () => world.colliders.map((c) => ({ ...c })),
       setYaw: (v: number) => (yaw = v),

@@ -40,7 +40,7 @@ app.get("/health", (_, res) =>
   res.json({
     ok: true,
     players: game.players.size,
-    version: "2.2.0",
+    version: "2.3.0",
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
   }),
 );
@@ -133,7 +133,9 @@ wss.on("connection", (ws, request) => {
       if (!id) return;
       const p = game.players.get(id);
       if (!p) return;
-      if (data.type === "move") game.move(id, data);
+      if (data.type === "football")
+        game.footballAction(id, data.action, data.team);
+      else if (data.type === "move") game.move(id, data);
       else if (data.type === "input") game.input(id, data);
       else if (data.type === "interact") game.interact(id, data.target);
       else if (data.type === "respawn") {
@@ -152,7 +154,13 @@ wss.on("connection", (ws, request) => {
         )
           return;
         const signal = data.signal;
-        if (signal && (signal.description || signal.candidate || signal.reset))
+        if (
+          signal &&
+          (signal.description ||
+            signal.candidate ||
+            signal.reset ||
+            signal.restart)
+        )
           send(sockets.get(to.id), { type: "signal", from: id, signal });
       } else if (
         data.type === "test:teleport" &&
@@ -185,12 +193,13 @@ wss.on("connection", (ws, request) => {
   });
   ws.on("error", () => {});
 });
-let ticks = 0;
 const timer = setInterval(() => {
   game.tick(0.05);
-  if (++ticks % 2 === 0) {
-    const snapshot = game.snapshot();
-    for (const ws of sockets.values()) send(ws, snapshot);
+  {
+    const payload = JSON.stringify(game.snapshot());
+    for (const ws of sockets.values())
+      if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
+        ws.send(payload);
   }
 }, 50);
 const port = Number(process.env.PORT) || 3001;

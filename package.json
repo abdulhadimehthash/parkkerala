@@ -1,6 +1,6 @@
 {
   "name": "park-kerala",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "start": "node server/index.js",
-    "test:server": "node --test tests/server.test.js tests/roads.test.js",
+    "test:server": "node --test tests/*.test.js",
     "format": "prettier --write src shared server tests"
   },
   "dependencies": {

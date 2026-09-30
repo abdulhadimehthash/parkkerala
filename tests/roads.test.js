@@ -97,11 +97,11 @@ test("bridge contact uses the deck surface instead of ground, on both crossings"
       }
     }
 });
-test("seven buses complete four loops with no wheel penetration, blockage or normal recovery", () => {
+test("eight buses complete four loops with no wheel penetration, blockage or normal recovery", () => {
   const schedule = createBusSchedule(),
     recovery = new BusRecovery(),
     stops = new Map();
-  assert.equal(schedule.fleet, 7);
+  assert.equal(schedule.fleet, 8);
   for (let t = 0; t < schedule.cycle * 4; t += 0.2) {
     const buses = [];
     for (let i = 0; i < schedule.fleet; i++) {

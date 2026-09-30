@@ -1,3 +1,4 @@
+import { FootballMatch } from "../shared/football.js";
 import { surfaceHeight } from "../shared/roads.js";
 import { MOVEMENT, TRANSPORT } from "../shared/config.js";
 import { malayalamDisplayName } from "../shared/names.js";
@@ -26,8 +27,11 @@ export class Game {
     now = () => Date.now(),
   } = {}) {
     this.respawnSeconds = respawnSeconds;
+    this.football = new FootballMatch();
+    this.sequence = 0;
     this.players = new Map();
     this.vehicles = makeVehicles();
+    this.spawns = this.vehicles.map((v) => ({ ...v, input: {} }));
     this.busRecovery = new BusRecovery();
     this.schedule = createBusSchedule(interval, dwell);
     this.now = now;
@@ -74,6 +78,7 @@ export class Game {
   remove(id) {
     const p = this.players.get(id);
     if (!p) return;
+    this.football.leave(p);
     for (const v of this.vehicles)
       if (v.owner === id) {
         v.owner = null;
@@ -110,6 +115,18 @@ export class Game {
       z: data.z,
       yaw: data.yaw,
       moving: !!data.moving,
+      vx: Math.max(-16, Math.min(16, Number(data.vx) || 0)),
+      vy: Math.max(-22, Math.min(9, Number(data.vy) || 0)),
+      vz: Math.max(-16, Math.min(16, Number(data.vz) || 0)),
+      grounded: data.grounded !== false,
+      animation:
+        data.grounded === false
+          ? "jump"
+          : data.moving
+            ? data.sprinting
+              ? "sprint"
+              : "walk"
+            : "idle",
       sprinting: !!data.sprinting,
       lastMove: this.now(),
     });
@@ -126,6 +143,7 @@ export class Game {
       v.owner = id;
       v.lastUsed = this.now();
       v.input = {};
+      v.inputSeq = 0;
       v.inputAt = this.now();
       p.mode = v.kind;
       p.vehicleId = v.id;
@@ -178,6 +196,8 @@ export class Game {
   input(id, input) {
     const v = this.vehicles.find((v) => v.owner === id);
     if (!v) return;
+    if (Number.isSafeInteger(input.seq) && input.seq <= (v.inputSeq || 0))
+      return;
     v.input = {
       throttle: Math.max(-1, Math.min(1, Number(input.throttle) || 0)),
       steer: Math.max(-1, Math.min(1, Number(input.steer) || 0)),
@@ -185,7 +205,18 @@ export class Game {
       lift: Math.max(-1, Math.min(1, Number(input.lift) || 0)),
       brake: !!input.brake,
     };
+    v.inputSeq = Math.max(
+      v.inputSeq || 0,
+      Number.isSafeInteger(input.seq) ? input.seq : 0,
+    );
     v.inputAt = this.now();
+  }
+  footballAction(id, action, team) {
+    const p = this.players.get(id);
+    if (!p) return;
+    if (action === "join") this.football.join(p, team, this.now());
+    else if (action === "leave") this.football.leave(p);
+    else if (action === "kick") this.football.kick(p, this.now());
   }
   tick(dt) {
     const now = this.now(),
@@ -197,7 +228,7 @@ export class Game {
     for (const v of this.vehicles) {
       if (v.owner) v.lastUsed = now;
       else if (now - v.lastUsed > this.respawnSeconds * 1000) {
-        const spawn = makeVehicles().find((s) => s.id === v.id);
+        const spawn = this.spawns.find((s) => s.id === v.id);
         const nearPlayer = [...this.players.values()].some(
           (p) =>
             Math.hypot(p.x - v.x, p.z - v.z) < 12 ||
@@ -211,6 +242,7 @@ export class Game {
       if (v.owner || Math.abs(v.speed) > 0.001 || Math.abs(v.vy) > 0.001)
         stepVehicle(v, v.input, dt, collisionData);
     }
+    this.football.tick(dt, now, this.players);
     for (const p of this.players.values()) {
       if (p.mode === "walk") continue;
       const v =
@@ -230,9 +262,22 @@ export class Game {
     return {
       type: "snapshot",
       time: this.now(),
-      players: [...this.players.values()].map(({ lastMove, ...p }) => p),
+      seq: ++this.sequence,
+      players: [...this.players.values()].map(({ lastMove, ...p }) => {
+        const age =
+          p.mode === "walk" && p.moving
+            ? Math.min(0.075, (this.now() - lastMove) / 1000)
+            : 0;
+        return {
+          ...p,
+          x: p.x + (p.vx || 0) * age,
+          y: p.y + (p.grounded === false ? (p.vy || 0) * age : 0),
+          z: p.z + (p.vz || 0) * age,
+        };
+      }),
       vehicles: this.vehicles.map(({ input, inputAt, lastUsed, ...v }) => v),
       buses: this.buses,
+      football: this.football.snapshot(this.now()),
       stops: STOPS.map((s) => {
         const seconds = (this.now() - this.epoch) / 1000;
         const boarding = this.buses.find((b) => b.stop === s.id && b.doors);

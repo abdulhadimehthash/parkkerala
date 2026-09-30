@@ -106,12 +106,13 @@ test("solid shops, riverbanks, bridges, world boundaries and all areas", async (
     [459, -260, "Sarovaram Park"],
     [335, -400, "Malar Viewpoint"],
     [505, -39, "Eastern Valley"],
+    [68, 241, "Football Turf"],
   ] as const) {
     await teleport(page, x, z);
     await page.waitForTimeout(120);
     expect((await state(page)).area).toBe(area);
   }
-  expect((await state(page)).discovered).toHaveLength(9);
+  expect((await state(page)).discovered).toHaveLength(10);
 });
 test("map, settings, pause, sound, quality and safe return work", async ({
   page,

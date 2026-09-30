@@ -8,7 +8,7 @@ export const MOVEMENT = {
   gravity: 22,
 };
 export const VOICE = {
-  fullVolumeRadius: 20,
+  fullVolumeRadius: 25,
   radius: 100,
   connectionRadius: 110,
   signalRadius: 120,

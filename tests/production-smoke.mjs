@@ -106,10 +106,10 @@ try {
   const vehicles = await p.evaluate(() => window.qa.snapshot.vehicles),
     buses = await p.evaluate(() => window.qa.snapshot.buses);
   assert.equal(vehicles.length, 25);
-  assert.equal(buses.length, 7);
+  assert.equal(buses.length, 8);
   assert.ok(buses.every((b) => b.seats.length === 20));
   console.log(
-    "PASS HTTPS/WSS, public usernames/Malayalam, 25 vehicles, 7 buses, 20 seats each, no production test hooks",
+    "PASS HTTPS/WSS, public usernames/Malayalam, 25 vehicles, 8 buses, 20 seats each, no production test hooks",
   );
   await p.getByRole("button", { name: "Toggle microphone" }).click();
   await q.getByRole("button", { name: "Toggle microphone" }).click();

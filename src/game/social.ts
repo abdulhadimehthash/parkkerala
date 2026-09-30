@@ -1,3 +1,5 @@
+import { FOOTBALL, inFootballArea } from "../../shared/football-config.js";
+import { footballModel } from "../world/football";
 import { groundPose } from "../../shared/roads.js";
 import * as T from "three";
 import {
@@ -12,6 +14,8 @@ import { Interactions } from "./interactions";
 import { stepVehicle, worldSeat } from "../../shared/simulation.js";
 import { STOPS, heightAt } from "../../shared/world.js";
 export class SocialGame {
+  private ball = footballModel();
+  private footballScore = "";
   network = new Network();
   voice = new ProximityVoice(this.network);
   interactions = new Interactions();
@@ -34,6 +38,10 @@ export class SocialGame {
   private voiceAt = 0;
   private seen = 0;
   private predicted: VehicleState | null = null;
+  private inputSequence = 0;
+  private inputs: { seq: number; input: any }[] = [];
+  private correction = new T.Vector3();
+  private rotationCorrection = 0;
   private previousMode = "walk";
   private sessionId = "";
   private previousId: string | null = "";
@@ -45,6 +53,7 @@ export class SocialGame {
     private colliders: Collider[],
     private notice: (text: string) => void,
   ) {
+    scene.add(this.ball);
     this.network.onError = notice;
     this.network.onStatus = (text) => {
       this.onStatus(text);
@@ -89,6 +98,20 @@ export class SocialGame {
   join(name: string) {
     this.network.connect(name);
   }
+  footballAction(action: string, team?: string) {
+    if (!this.network.connected || this.mode !== "walk") return;
+    if (
+      action === "kick" &&
+      !inFootballArea(
+        this.player.group.position.x,
+        this.player.group.position.z,
+        5,
+      )
+    )
+      return;
+    this.sendMovement();
+    this.network.send({ type: "football", action, team });
+  }
   interact() {
     if (!this.network.connected) {
       this.notice("Reconnect to the world to use transport.");
@@ -116,7 +139,11 @@ export class SocialGame {
       z: p.z,
       yaw: this.player.group.rotation.y,
       sprinting: !!this.player.group.userData.sprinting,
-      moving: this.player.legs.some((l) => Math.abs(l.rotation.x) > 0.1),
+      grounded: this.player.group.userData.grounded !== false,
+      moving: !!this.player.group.userData.moving,
+      vx: this.player.group.userData.velocity?.[0] ?? 0,
+      vy: this.player.group.userData.velocity?.[1] ?? 0,
+      vz: this.player.group.userData.velocity?.[2] ?? 0,
     });
   }
   update(
@@ -134,6 +161,9 @@ export class SocialGame {
       this.player.group.position.set(self.x, self.y, self.z);
       this.previousMode = "";
       this.predicted = null;
+      this.inputs = [];
+      this.correction.set(0, 0, 0);
+      this.rotationCorrection = 0;
     }
     this.mode = self.mode;
     this.vehicleId = self.vehicleId;
@@ -143,8 +173,13 @@ export class SocialGame {
       this.previousMode = this.mode;
       this.previousId = this.vehicleId;
       this.predicted = null;
+      this.inputs = [];
+      this.correction.set(0, 0, 0);
+      this.rotationCorrection = 0;
       this.onControls(this.mode);
     }
+    const rendered =
+      this.network.timeline.sample(performance.now()) ?? snapshot;
     const input = {
       throttle: paused
         ? 0
@@ -160,11 +195,15 @@ export class SocialGame {
         ? 0
         : (keys.has("KeyQ") ? 1 : 0) - (keys.has("KeyR") ? 1 : 0),
     };
-    if (performance.now() - this.sent > 100) {
+    if (performance.now() - this.sent > 50) {
       this.sent = performance.now();
       if (this.mode === "walk") this.sendMovement();
-      else if (this.mode !== "bus")
-        this.network.send({ type: "input", ...input });
+      else if (this.mode !== "bus") {
+        const seq = ++this.inputSequence;
+        this.inputs.push({ seq, input });
+        if (this.inputs.length > 40) this.inputs.shift();
+        this.network.send({ type: "input", seq, ...input });
+      }
     }
     const fresh = this.seen !== snapshot.time;
     this.seen = snapshot.time;
@@ -178,24 +217,47 @@ export class SocialGame {
         this.models.set(v.id, model);
       }
       model.visible = Math.hypot(v.x - self.x, v.z - self.z) < 220;
-      let display = v;
+      let display = (rendered.vehicles.find((r: any) => r.id === v.id) ??
+        v) as VehicleState;
       if (v.owner === self.id) {
-        if (!this.predicted || fresh) {
-          this.predicted = { ...v };
+        if (!this.predicted) this.predicted = { ...v };
+        else if (fresh) {
+          this.inputs = this.inputs.filter((i) => i.seq > (v.inputSeq ?? 0));
+          const replay = { ...v };
+          for (const entry of this.inputs)
+            stepVehicle(replay, entry.input, 0.05, this.colliders);
+          this.correction.set(
+            replay.x - this.predicted.x,
+            replay.y - this.predicted.y,
+            replay.z - this.predicted.z,
+          );
+          this.rotationCorrection = Math.atan2(
+            Math.sin(replay.yaw - this.predicted.yaw),
+            Math.cos(replay.yaw - this.predicted.yaw),
+          );
+          this.predicted.speed = replay.speed;
+          this.predicted.vy = replay.vy;
+          if (this.correction.length() > 8) {
+            this.predicted = { ...replay };
+            this.correction.set(0, 0, 0);
+            this.rotationCorrection = 0;
+          }
         }
+        const blend = 1 - Math.exp(-10 * dt);
+        this.predicted.x += this.correction.x * blend;
+        this.predicted.y += this.correction.y * blend;
+        this.predicted.z += this.correction.z * blend;
+        this.predicted.yaw += this.rotationCorrection * blend;
+        this.rotationCorrection *= 1 - blend;
+        this.correction.multiplyScalar(1 - blend);
         stepVehicle(this.predicted, input, dt, this.colliders);
         display = this.predicted;
         this.player.group.position.set(display.x, display.y, display.z);
         this.player.group.rotation.y = display.yaw;
       }
       const goal = new T.Vector3(display.x, display.y, display.z);
-      model.position.lerp(goal, 1 - Math.exp(-14 * dt));
-      model.rotation.y +=
-        Math.atan2(
-          Math.sin(display.yaw - model.rotation.y),
-          Math.cos(display.yaw - model.rotation.y),
-        ) *
-        (1 - Math.exp(-14 * dt));
+      model.position.copy(goal);
+      model.rotation.y = display.yaw;
       const onRoad = model.visible
         ? groundPose(
             model.position.x,
@@ -225,7 +287,7 @@ export class SocialGame {
         enabled: !v.owner,
       });
     }
-    for (const bus of snapshot.buses) {
+    for (const bus of rendered.buses) {
       let model = this.models.get(bus.id);
       if (!model) {
         model = vehicleModel("bus");
@@ -233,16 +295,8 @@ export class SocialGame {
         model.position.set(bus.x, bus.y, bus.z);
         this.models.set(bus.id, model);
       }
-      model.position.lerp(
-        new T.Vector3(bus.x, bus.y, bus.z),
-        1 - Math.exp(-13 * dt),
-      );
-      model.rotation.y +=
-        Math.atan2(
-          Math.sin(bus.yaw - model.rotation.y),
-          Math.cos(bus.yaw - model.rotation.y),
-        ) *
-        (1 - Math.exp(-13 * dt));
+      model.position.set(bus.x, bus.y, bus.z);
+      model.rotation.y = bus.yaw;
       model.visible = Math.hypot(bus.x - self.x, bus.z - self.z) < 220;
       const pose = model.visible
         ? groundPose(
@@ -281,11 +335,21 @@ export class SocialGame {
           y: bus.y,
           z: bus.z,
           range: 7.8,
-          enabled: bus.seats.some((s) => !s),
+          enabled: bus.seats.some((s: string | null) => !s),
         });
     }
+    const football =
+      this.network.ballTimeline.sample(performance.now())?.football ??
+      snapshot.football;
+    if (football) {
+      const b = football.ball;
+      this.ball.position.set(b.x, b.y, b.z);
+      this.ball.rotation.x += (b.vz * dt) / FOOTBALL.radius;
+      this.ball.rotation.z -= (b.vx * dt) / FOOTBALL.radius;
+      this.ball.visible = Math.hypot(self.x - b.x, self.z - b.z) < 220;
+    }
     const seen = new Set<string>();
-    for (const p of snapshot.players) {
+    for (const p of rendered.players) {
       if (p.id === self.id) continue;
       seen.add(p.id);
       let remote = this.remotes.get(p.id);
@@ -311,19 +375,36 @@ export class SocialGame {
         remote.person.group.add(label);
       }
       remote.state = p;
-      remote.person.group.position.lerp(
-        new T.Vector3(p.x, p.y, p.z),
-        1 - Math.exp(-12 * dt),
-      );
-      remote.person.group.rotation.y +=
-        Math.atan2(
-          Math.sin(p.yaw - remote.person.group.rotation.y),
-          Math.cos(p.yaw - remote.person.group.rotation.y),
-        ) *
-        (1 - Math.exp(-12 * dt));
+      remote.person.group.position.set(p.x, p.y, p.z);
+      remote.person.group.rotation.y = p.yaw;
+      const transport = p.vehicleId ? this.models.get(p.vehicleId) : null;
+      if (transport) {
+        if (p.mode === "bus") {
+          const seat = worldSeat(
+            {
+              x: transport.position.x,
+              y: transport.position.y,
+              z: transport.position.z,
+              yaw: transport.rotation.y,
+              pitch: transport.userData.body.rotation.x,
+            },
+            p.seat ?? 0,
+          );
+          remote.person.group.position.set(seat.x, seat.y, seat.z);
+        } else remote.person.group.position.copy(transport.position);
+        remote.person.group.rotation.y = transport.rotation.y;
+      }
       remote.person.group.visible =
         Math.hypot(p.x - self.x, p.z - self.z) < 160;
-      remote.label.material.color.set(p.speaking ? "#b9f179" : "#ffffff");
+      remote.label.material.color.set(
+        p.speaking
+          ? "#b9f179"
+          : p.footballTeam === "A"
+            ? "#a5d9ff"
+            : p.footballTeam === "B"
+              ? "#ffd08b"
+              : "#ffffff",
+      );
       remote.label.scale.setScalar(p.speaking ? 1.08 : 1);
       remote.label.scale.multiply(new T.Vector3(3.4, 0.64, 1));
       animatePerson(
@@ -331,6 +412,12 @@ export class SocialGame {
         time * (p.sprinting ? 1.4 : 1),
         p.moving ? (p.sprinting ? 1 : 0.75) : 0,
       );
+      if (p.grounded === false) {
+        remote.person.legs.forEach((l) => (l.rotation.x = -0.35));
+        remote.person.arms.forEach((l) => (l.rotation.x = -0.6));
+      }
+      if ((p.kickingUntil ?? 0) > snapshot.time)
+        remote.person.legs[0].rotation.x = -1.1;
       if (p.mode === "bus")
         remote.person.legs.forEach((l) => (l.rotation.x = -Math.PI / 2));
       if (["car", "helicopter"].includes(p.mode))
@@ -360,6 +447,46 @@ export class SocialGame {
   }
   private updateUI() {
     this.updateBoards();
+    const match = this.network.snapshot?.football,
+      position = this.player.group.position,
+      hud = document.getElementById("football-hud")!;
+    const nearby =
+      inFootballArea(position.x, position.z, 25) && this.mode === "walk";
+    hud.classList.toggle("hidden", !nearby);
+    if (match && nearby) {
+      const team = match.teams[this.network.id];
+      document.getElementById("football-score")!.textContent =
+        `BLUE ${match.scores.A} — ${match.scores.B} AMBER`;
+      const counts = Object.values(match.teams),
+        minutes = Math.floor(match.remaining / 60),
+        seconds = String(match.remaining % 60).padStart(2, "0");
+      document.getElementById("football-clock")!.textContent = match.goal
+        ? `GOAL! ${match.goal === "A" ? "Blue" : "Amber"} · Kickoff in ${Math.ceil(match.resetIn)}s`
+        : match.status === "finished"
+          ? "Full time · Join to start another match"
+          : match.status === "playing"
+            ? `${minutes}:${seconds} · ${team ? (team === "A" ? "Blue" : "Amber") + " team" : "Spectating"}`
+            : "Practice · Join both teams to start";
+      for (const [id, t] of [
+        ["football-blue", "A"],
+        ["football-amber", "B"],
+      ]) {
+        const button = document.getElementById(id) as HTMLButtonElement;
+        button.textContent = `${team === t ? "Playing" : "Join"} ${t === "A" ? "Blue" : "Amber"} (${counts.filter((v) => v === t).length}/5)`;
+        button.disabled =
+          !inFootballArea(position.x, position.z, 14) ||
+          (team === t && match.status !== "finished");
+      }
+      document
+        .getElementById("football-leave")!
+        .classList.toggle("hidden", !team);
+      (document.getElementById("football-kick") as HTMLButtonElement).disabled =
+        !team;
+      const score = `${match.scores.A}:${match.scores.B}`;
+      if (this.footballScore && score !== this.footballScore && match.goal)
+        this.notice(`GOAL! ${match.goal === "A" ? "Blue" : "Amber"} scores.`);
+      this.footballScore = score;
+    }
     const p = this.player.group.position,
       context = document.getElementById("interaction")!,
       target = this.interactions.closest(p.x, p.y, p.z);
@@ -484,6 +611,19 @@ export class SocialGame {
         mode: r.state.mode,
       })),
       snapshot: this.network.snapshot,
+      football: { position: this.ball.position.toArray() },
+      buffering: {
+        delay: this.network.timeline.delay,
+        rejected: this.network.timeline.rejected,
+      },
+      transports: [...this.models].map(([id, m]) => ({
+        id,
+        x: m.position.x,
+        y: m.position.y,
+        z: m.position.z,
+        yaw: m.rotation.y,
+        pitch: m.userData.body.rotation.x,
+      })),
       voice: this.voice.diagnostics(),
       mic: this.voice.enabled,
     };

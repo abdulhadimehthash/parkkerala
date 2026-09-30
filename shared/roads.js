@@ -155,6 +155,22 @@ const definitions = [
     ],
   },
   {
+    id: "turf-entry",
+    width: 8,
+    nodes: [
+      [0, 235, 0],
+      [36, 235, 0],
+    ],
+  },
+  {
+    id: "turf-parking",
+    width: 10,
+    nodes: [
+      [24, 235, 0],
+      [24, 267, 0],
+    ],
+  },
+  {
     id: "town-pad",
     width: 8,
     nodes: [
@@ -358,6 +374,7 @@ const stopDefs = [
   ["viewpoint", "Malar Viewpoint", "മലർ മല", 325, -381],
   ["sarovaram", "Sarovaram Park", "സരോവരം പാർക്ക്", 556, -305],
   ["east", "Eastern Valley", "കിഴക്കൻ താഴ്വര", 505, -39],
+  ["football", "Football Turf", "ഫുട്ബോൾ ടർഫ്", 75, 164],
 ];
 export const ROAD_STOPS = stopDefs
   .map(([id, name, local, x, z]) => {

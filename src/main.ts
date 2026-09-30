@@ -1,3 +1,14 @@
+import {
+  ROADS,
+  MAIN_ROAD,
+  ROAD_STOPS,
+  roadFrame,
+  groundPose,
+  surfaceHeight,
+  walkingHeight,
+  validateRoads,
+} from "../shared/roads.js";
+import { roadDebugGroup } from "./world/terrain";
 import { MOVEMENT } from "../shared/config.js";
 import * as T from "three";
 import {
@@ -549,7 +560,7 @@ function movePlayer(dt: number, time: number) {
   jumpQueued = false;
   verticalSpeed -= MOVEMENT.gravity * dt;
   p.y += verticalSpeed * dt;
-  const floor = heightAt(p.x, p.z) + 0.25;
+  const floor = walkingHeight(p.x, p.z);
   if (grounded && verticalSpeed <= 0) p.y = floor;
   if (p.y <= floor) {
     p.y = floor;
@@ -673,26 +684,18 @@ function drawMap(map: HTMLCanvasElement, mini: boolean) {
   rect(183, 205, 63, 46, "#80b7b2");
   rect(96, 110, 71, 92, "#a3b56a");
   rect(-61, 91, 46, 33, "#8da474");
-  for (const [x, z, rw, rh] of [
-    [0, 20, 12, 560],
-    [4, 34, 438, 12],
-    [150, 0, 11, 556],
-    [81, -146, 166, 10],
-    [-91, 124, 182, 8],
-    [75, 164, 150, 8],
-    [-184, -6, 8, 247],
-  ])
-    rect(x, z, rw, rh, "#f2e4c4");
   rect(PARK.x, PARK.z, PARK.width, PARK.depth, "#85a879");
   rect(458, -280, 72, 49, "#80b7b2");
   c.strokeStyle = "#efe3c4";
-  c.lineWidth = 9 * scale;
-  c.beginPath();
-  HILL_ROAD.forEach((point, i) => {
-    if (i === 0) c.moveTo(X(point[0]), Z(point[1]));
-    else c.lineTo(X(point[0]), Z(point[1]));
-  });
-  c.stroke();
+  for (const road of ROADS) {
+    c.lineWidth = road.width * scale;
+    c.beginPath();
+    road.points.forEach((p, i) => {
+      if (i) c.lineTo(X(p.x), Z(p.z));
+      else c.moveTo(X(p.x), Z(p.z));
+    });
+    c.stroke();
+  }
   social?.drawMap(c, X, Z, mini);
   world?.colliders.forEach((b) => {
     if (b.w > 25 || b.d > 35 || b.w < 3) return;
@@ -901,6 +904,23 @@ canvas.addEventListener("webglcontextlost", (e) => {
 canvas.addEventListener("webglcontextrestored", () => location.reload());
 // Development-only probes let end-to-end tests inspect actual simulation outcomes.
 if (import.meta.env.DEV) {
+  let debug: T.Group | undefined;
+  const toggleRoads = () => {
+    debug ??= roadDebugGroup();
+    if (!debug.parent) {
+      scene.add(debug);
+      debug.visible = false;
+    }
+    debug.visible = !debug.visible;
+  };
+  addEventListener("keydown", (e) => {
+    if (e.code === "F8") {
+      e.preventDefault();
+      toggleRoads();
+    }
+  });
+  if (new URLSearchParams(location.search).has("roadDebug"))
+    setTimeout(toggleRoads, 1000);
   Object.defineProperty(window, "__park", {
     value: {
       state: () => ({
@@ -924,12 +944,41 @@ if (import.meta.env.DEV) {
         collectibles: world?.collectibles.filter((c) => c.visible).length,
       }),
       teleport: (x: number, z: number, y = 0.25) => {
-        player.group.position.set(x, heightAt(x, z) + y, z);
+        player.group.position.set(x, walkingHeight(x, z) + (y - 0.25), z);
         verticalSpeed = 0;
         motionX = 0;
         motionZ = 0;
         wasMoving = false;
         social?.network.send({ type: "test:teleport", x, z });
+      },
+      roads: () => ({
+        issues: validateRoads(),
+        roads: ROADS,
+        stops: ROAD_STOPS,
+      }),
+      sampleSurfaces: (points: number[][]) => {
+        const ray = new T.Raycaster(),
+          roads = world.root.children.filter((c) => c.userData.roadSurface),
+          terrain = world.root.children.filter((c) => c.userData.terrain),
+          shoulders = world.root.children.filter(
+            (c) => c.userData.roadShoulder,
+          );
+        world.root.updateMatrixWorld(true);
+        return points.map(([x, z]) => {
+          ray.set(new T.Vector3(x, 250, z), new T.Vector3(0, -1, 0));
+          return {
+            x,
+            z,
+            road: ray.intersectObjects(roads, false)[0]?.point.y,
+            terrain: ray.intersectObjects(terrain, false)[0]?.point.y,
+            shoulder: ray.intersectObjects(shoulders, false)[0]?.point.y,
+            expected: surfaceHeight(x, z),
+          };
+        });
+      },
+      roadPose: (s: number, offset = -3) => {
+        const f = roadFrame(MAIN_ROAD, s, offset);
+        return { ...f, ...groundPose(f.x, f.z, f.yaw, "car") };
       },
       voiceStats: () => social.voice.stats(),
       reconnect: () => social.network.socket?.close(),

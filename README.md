@@ -20,26 +20,28 @@ NODE_ENV=production PORT=3000 npm start
 
 ## Controls
 
-| Mode | Controls |
-| --- | --- |
-| Walk | WASD / arrows, Shift sprint, Space jump |
-| Interact | E enters or exits the closest usable transport |
-| Camera | Mouse drag; L captures the mouse; Esc releases it |
-| Car / bike | W accelerate, S brake/reverse, A/D steer, Space brake, E exit while stopped |
+| Mode       | Controls                                                                               |
+| ---------- | -------------------------------------------------------------------------------------- |
+| Walk       | WASD / arrows, Shift sprint, Space jump                                                |
+| Interact   | E enters or exits the closest usable transport                                         |
+| Camera     | Mouse drag; L captures the mouse; Esc releases it                                      |
+| Car / bike | W accelerate, S brake/reverse, A/D steer, Space brake, E exit while stopped            |
 | Helicopter | W/S forward/back, A/D strafe, Q/R rotate, Space climb, C descend, E exit after landing |
-| Bus | E board when doors are open; E exit at a stop |
-| Map | M |
+| Bus        | E board when doors are open; E exit at a stop                                          |
+| Map        | M                                                                                      |
 
 The settings menu has the roadmap, graphics quality, camera sensitivity, ambient audio, mute-other-players and return-to-town controls. Points and discoveries last for the visit. The microphone is off by default.
 
 ## World and architecture
 
-The original town connects to nine named areas, including the Sarovaram Park plateau, an elevated lake promenade, tea garden, pavilion, parking, bus stop, and a winding hill road loop. Walkable terrain uses a deterministic height function shared by client and server. Existing buildings and vegetation are raised as whole assets, and road ribbons follow the terrain. Rendering uses spatial chunks, instanced primitive geometry and shared materials.
+The original town connects to nine named areas, including the Sarovaram Park plateau, an elevated lake promenade, tea garden, pavilion, parking, bus stop, and a winding hill road loop. Roads use one shared, rounded centerline network with explicit grades. Terrain is cut around that network, and the client and server use its actual driving surface, including bridges. Existing buildings and vegetation are raised as whole assets. Rendering uses spatial chunks, instanced primitive geometry and shared materials.
 
 - `src/world.ts`: original Kerala world and reusable asset builders
-- `src/world/terrain.ts`: tiled heightfield and terrain-following road ribbons
+- `src/world/terrain.ts`: tiled heightfield, generated road/shoulder meshes and development road overlay
 - `src/world/parks/registry.ts`: modular park registry and Sarovaram destination
-- `shared/world.js`: terrain, bounds, transport definitions, stops and park metadata
+- `shared/roads.js`: centerlines, grades, junction surfaces, lanes, stop bays, clearance and wheel contact
+- `shared/terrain-base.js`: natural terrain and level helipads
+- `shared/world.js`: bounds, transport definitions, stops and park metadata
 - `shared/simulation.js`: shared vehicle physics and deterministic bus schedule
 - `shared/colliders.json`: collision data exported from the rendered world
 - `src/game/`: universal interactions, transport models and multiplayer presentation
@@ -113,3 +115,23 @@ PARK_URL=https://parkkerala.online node tests/production-smoke.mjs
 ```
 
 This checks HTTPS/WSS, Malayalam name metadata, public shared transport, two-way WebRTC packets, the 100m gain curve, mute, an available town car, and two passengers boarding/riding/exiting the same bus. It uses ordinary controls and has no production teleport API. Keep the test names Hadi and Sinan available while running it.
+
+## Road integrity
+
+The main route is a continuous 2 km loop with rounded turns, a 12 m roadway, six roadside stops and widened pull-in bays. The same arc-length path generates roads, bus motion, minimap, clearance zones and roadside lamps. Branches blend into the primary road at junctions. Terrain tiles have finer resolution near roads and are cut to the corridor before surrounding slopes blend into the natural hills.
+
+Vehicle height comes from the road surface, including graded bridge decks. Pitch uses front/rear contact points; root height accounts for the actual model wheel hub and tyre radius at every wheel. Passenger seats use the bus pitch transform. Buses ease into bays and maintain their timetable through curves; a state-recovery guard handles invalid positions as a fallback.
+
+The previous failures came from separate road/bus paths, terrain-only height queries, mismatched wheel offsets/pitch and props placed without a common road clearance zone. These are now shared data and calculations. Shoulder and intersection geometry are also checked against the visible asphalt.
+
+In development, press **F8** or add `?roadDebug` to show centerlines, surface edges, the bus lane, stops and vehicle spawns. Normal production builds contain no public debug controls or teleport endpoint.
+
+Additional road checks, with the local test server running:
+
+```sh
+node --test tests/roads.test.js
+node tests/road-surfaces.mjs
+node tests/drive-network.mjs
+```
+
+These validate every road grade, sampled lane clearance, bridge tyre contact, seven buses over four complete loops, recovery, and full car/bike traversals. The surface check casts rays against actual rendered road and terrain triangles throughout the network. The driving check uses two real browser sessions and ordinary W/A/S/D/brake controls for a complete loop each; it only teleports the pedestrians to their parked vehicles during setup.

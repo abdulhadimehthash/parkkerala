@@ -22,8 +22,28 @@ export const TRANSPORT = {
   abandonedVehicleSeconds: 180,
 };
 export const HELIPADS = [
-  { id: "helicopter", x: 48, z: 193, name: "Town" },
-  { id: "helicopter-park", x: 634, z: -281, name: "Sarovaram" },
-  { id: "helicopter-hill", x: 375, z: -481, name: "Malar ridge" },
-  { id: "helicopter-north", x: 188, z: -566, name: "Northern outlook" },
+  { id: "helicopter", x: 48, z: 193, elevation: 0, name: "Town" },
+  { id: "helicopter-park", x: 634, z: -281, elevation: 40, name: "Sarovaram" },
+  {
+    id: "helicopter-hill",
+    x: 375,
+    z: -481,
+    elevation: 30,
+    name: "Malar ridge",
+  },
+  {
+    id: "helicopter-north",
+    x: 188,
+    z: -566,
+    elevation: 35,
+    name: "Northern outlook",
+  },
 ];
+
+export const PARK_PARKING = {
+  x: 592,
+  z: -259,
+  width: 38,
+  depth: 70,
+  elevation: 40,
+};

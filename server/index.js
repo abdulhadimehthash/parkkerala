@@ -1,3 +1,4 @@
+import { walkingHeight } from "../shared/roads.js";
 import { TRANSPORT, VOICE } from "../shared/config.js";
 import express from "express";
 import { createServer } from "node:http";
@@ -39,7 +40,7 @@ app.get("/health", (_, res) =>
   res.json({
     ok: true,
     players: game.players.size,
-    version: "2.1.0",
+    version: "2.2.0",
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
   }),
 );
@@ -162,7 +163,7 @@ wss.on("connection", (ws, request) => {
         Object.assign(p, {
           x: data.x,
           z: data.z,
-          y: heightAt(data.x, data.z) + 0.25,
+          y: walkingHeight(data.x, data.z),
           lastMove: Date.now(),
         });
         send(ws, { type: "correction", x: p.x, y: p.y, z: p.z });

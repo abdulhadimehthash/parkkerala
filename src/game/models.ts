@@ -52,7 +52,7 @@ export function vehicleModel(kind: string, color = "#ceaa61") {
       box("#52796a", [s.x, 1.6, s.z], [0.48, 0.22, 0.75]);
       box("#547b6b", [s.x, 2, s.z + 0.35], [0.48, 0.8, 0.15]);
     }
-    const door = box("#d2bc88", [1.5, 2, -3.7], [0.1, 2.3, 1.6]);
+    const door = box("#d2bc88", [-1.5, 2, -3.7], [0.1, 2.3, 1.6]);
     g.userData.door = door;
     for (const x of [-1.5, 1.5])
       for (const z of [-3, 3])

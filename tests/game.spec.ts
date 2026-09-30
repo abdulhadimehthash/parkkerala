@@ -2,11 +2,17 @@ import { test, expect, Page } from "@playwright/test";
 const state = (page: Page) =>
   page.evaluate(() => (window as any).__park.state());
 const teleport = (page: Page, x: number, z: number, y = 0.25) =>
-  page.evaluate(({ x, z, y }) => (window as any).__park.teleport(x, z, y), {
-    x,
-    z,
-    y,
-  });
+  page.evaluate(
+    ({ x, z, y }) => {
+      (window as any).__park.teleport(x, z, y);
+      (window as any).__park.setYaw(0);
+    },
+    {
+      x,
+      z,
+      y,
+    },
+  );
 async function hold(page: Page, key: string, ms: number) {
   await page.keyboard.down(key);
   await page.waitForTimeout(ms);

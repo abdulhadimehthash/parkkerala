@@ -1,3 +1,4 @@
+import { groundPose } from "../shared/roads.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Game } from "../server/game.js";
@@ -93,8 +94,11 @@ test("bus countdown decreases and every stop has scheduled open doors", () => {
       }
     assert.ok(found, stop.name);
   }
-  const start = countdown(schedule, 17, "viewpoint"),
-    later = countdown(schedule, 20, "viewpoint");
+  const t = Array.from({ length: 30 }, (_, i) => i).find(
+    (t) => countdown(schedule, t, "viewpoint") > 6,
+  );
+  const start = countdown(schedule, t, "viewpoint"),
+    later = countdown(schedule, t + 3, "viewpoint");
   assert.equal(start - later, 3);
 });
 test("terrain is elevated and stable vehicle physics follows slopes", () => {
@@ -113,7 +117,7 @@ test("terrain is elevated and stable vehicle physics follows slopes", () => {
   };
   for (let i = 0; i < 120; i++)
     stepVehicle(v, { throttle: 1, steer: 0 }, 0.05, []);
-  assert.equal(v.y, heightAt(v.x, v.z) + 0.25);
+  assert.equal(v.y, groundPose(v.x, v.z, v.yaw, v.kind).y);
   assert.ok(v.z < -245);
   const before = v.z;
   for (let i = 0; i < 20; i++) stepVehicle(v, { brake: true }, 0.05, []);

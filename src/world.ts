@@ -1,3 +1,13 @@
+import {
+  ROADS,
+  MAIN_ROAD,
+  ROAD_STOPS,
+  roadFrame,
+  loopDelta,
+  bayWidening,
+  clearRoadFootprint,
+  insideOtherRoad,
+} from "../shared/roads.js";
 import { HELIPADS } from "../shared/config.js";
 import * as T from "three";
 import {
@@ -8,7 +18,12 @@ import {
   nearRoad,
   VEHICLE_SPAWNS,
 } from "../shared/world.js";
-import { createTerrain, roadRibbon, samplePath } from "./world/terrain";
+import {
+  createTerrain,
+  buildRoadNetwork,
+  roadRibbon,
+  samplePath,
+} from "./world/terrain";
 import { buildParks } from "./world/parks/registry";
 
 export const WORLD = 720;
@@ -255,7 +270,7 @@ export function createWorld(): WorldData {
   ) {
     return part(p, "box", c, [x, y, z], [w, h, d]);
   }
-  // Shared ground and a road network that crosses the river at two bridges.
+  // Shared ground and a road network that crosses the river on shared bridge surfaces.
   createTerrain(root);
   box(root, "#e7d5a5", -223, -0.01, 0, 48, 0.1, 600);
   function water(x: number, z: number, w: number, d: number) {
@@ -284,45 +299,19 @@ export function createWorld(): WorldData {
   water(183, 205, 63, 46);
   // Water uses solid shore boundaries. Only bridges allow river crossings.
   solid(-254, 0, 16, 600, 4);
+  colliders.at(-1)!.water = true;
   solid(183, 205, 63, 46, 2);
+  colliders.at(-1)!.water = true;
   for (const [x, w] of [
-    [-117, 220],
+    [-209, 36],
+    [-92, 170],
     [75, 136],
     [222.5, 131],
-  ])
+  ]) {
     solid(x, -92, w, 27, 2);
-  function road(x: number, z: number, w: number, d: number, mark = true) {
-    const points = samplePath(
-      d > w
-        ? [
-            [x, z - d / 2],
-            [x, z + d / 2],
-          ]
-        : [
-            [x - w / 2, z],
-            [x + w / 2, z],
-          ],
-    );
-    root.add(
-      roadRibbon(points, Math.min(w, d) + 3, "#d8c6a0", 0.08),
-      roadRibbon(points, Math.min(w, d)),
-    );
-    if (mark)
-      for (let i = 1; i < points.length - 1; i += 3)
-        root.add(roadRibbon(points.slice(i, i + 2), 0.15, "#e7e5c5", 0.205));
+    colliders.at(-1)!.water = true;
   }
-  road(0, 20, 13, 560);
-  road(4, 34, 438, 13);
-  road(150, 0, 11, 556);
-  road(81, -146, 166, 10);
-  road(-91, 124, 182, 8);
-  road(75, 164, 150, 8);
-  road(-184, -6, 8, 247, false);
-  // Round village lane and connected coastal bends.
-  for (let i = 0; i < 15; i++) {
-    const a = ((i / 14) * Math.PI) / 2;
-    road(-184 + 34 * (1 - Math.cos(a)), -130 - 16 * Math.sin(a), 10, 10, false);
-  }
+  buildRoadNetwork(root);
   function sign(
     p: T.Object3D,
     x: number,
@@ -377,6 +366,7 @@ export function createWorld(): WorldData {
     return m;
   }
   function palm(x: number, z: number, scale = 1) {
+    if (clearRoadFootprint(x, z, 0.8, 0.8)) return;
     const p = chunk(x, z),
       g = new T.Group();
     g.position.set(x, 0, z);
@@ -584,6 +574,7 @@ export function createWorld(): WorldData {
   for (const x of [-8.8, 8.8])
     box(root, "#ddd3b1", x, 0.27, -24, 3.3, 0.22, 115);
   function pole(x: number, z: number) {
+    if (clearRoadFootprint(x, z, 0.4, 0.4)) return;
     const g = chunk(x, z);
     part(g, "cylinder", "#7d8174", [x, 5, z], [0.15, 10, 0.15]);
     box(g, "#6b7164", x, 9.2, z, 2.6, 0.15, 0.17);
@@ -611,6 +602,7 @@ export function createWorld(): WorldData {
     }
   }
   function lamp(x: number, z: number) {
+    if (clearRoadFootprint(x, z, 0.4, 0.4)) return;
     const g = chunk(x, z);
     part(g, "cylinder", "#435e50", [x, 3.4, z], [0.08, 6.8, 0.08]);
     box(g, "#435e50", x + 0.55, 6.75, z, 1.2, 0.1, 0.1);
@@ -628,25 +620,21 @@ export function createWorld(): WorldData {
     for (const xx of [-4, 4]) box(g, "#355b50", xx, 1.8, 0, 0.15, 3.6, 0.15);
     box(g, "#d2c3a0", 0, 3.6, 0, 9, 0.23, 4);
     box(g, "#e3d8b3", 0, 1.6, -1.7, 8.6, 3.2, 0.13);
-    sign(
-      g,
-      0,
-      2.4,
-      -1.6,
-      "ബസ് സ്റ്റോപ്പ്",
-      "CHAYAPURAM • BUS STOP",
-      7,
-      "#426b59",
-    );
     box(g, "#866d46", 0, 0.8, -0.3, 6, 0.2, 0.8);
     for (const xx of [-2, 2]) box(g, "#445c4a", xx, 0.4, -0.3, 0.15, 0.8, 0.65);
-    solid(x, z + 1.7, 8.6, 0.2, 3.4);
+    solid(
+      x - Math.sin(angle) * 1.7,
+      z - Math.cos(angle) * 1.7,
+      Math.abs(Math.cos(angle)) * 8.6 + Math.abs(Math.sin(angle)) * 0.2,
+      Math.abs(Math.sin(angle)) * 8.6 + Math.abs(Math.cos(angle)) * 0.2,
+      3.4,
+    );
   }
-  busStop(24, 43, Math.PI);
+
   sign(chunk(0, 0), -8, 4.4, 27, "ചായപ്പുറം", "CHAYAPURAM", 5.2, "#315b48");
   box(chunk(0, 0), "#dad6bd", -8, 2.1, 27, 0.16, 4.2, 0.16);
   function bridge(x: number) {
-    box(root, "#c7c6b0", x, 0.21, -92, 15, 0.3, 33);
+    box(root, "#c7c6b0", x, 0.2, -92, 15, 0.3, 33);
     for (const xx of [x - 7, x + 7]) {
       box(root, "#eadfbd", xx, 1.6, -92, 0.22, 0.22, 33);
       box(root, "#e3d2af", xx, 0.9, -92, 0.17, 0.16, 33);
@@ -657,6 +645,7 @@ export function createWorld(): WorldData {
     for (let z = -105; z < -75; z += 8)
       box(root, "#f5e8b8", x, 0.38, z, 0.17, 0.03, 4);
   }
+  bridge(-184);
   bridge(0);
   bridge(150);
   // Backwaters, jetty and a little kettuvallam-inspired houseboat.
@@ -1156,33 +1145,17 @@ export function createWorld(): WorldData {
     collectibles.push(g);
   });
   // Expand the established world with terrain-following roads and modular destinations.
-  const hillPoints = samplePath(HILL_ROAD, 2.5);
-  root.add(
-    roadRibbon(hillPoints, 14, "#ccbe99", 0.08),
-    roadRibbon(hillPoints, 11),
-  );
-  for (let i = 1; i < hillPoints.length - 2; i += 4)
-    root.add(roadRibbon(hillPoints.slice(i, i + 2), 0.16, "#ebe3bd", 0.22));
-  for (let i = 0; i < hillPoints.length; i += 12) {
-    const [x, z] = hillPoints[i];
-    lamp(x + 8, z);
-    if (i % 24 === 0) {
-      box(chunk(x + 8, z), "#ded4b0", x + 8, 0.9, z, 0.3, 1.8, 0.3);
-    }
-  }
-  for (const stop of STOPS) {
-    busStop(stop.x + 11, stop.z, Math.PI / 2);
-    sign(
-      chunk(stop.x + 11, stop.z),
-      stop.x + 8,
-      4.4,
-      stop.z,
-      stop.local,
-      stop.name + " • BUS STOP",
-      7,
-      "#355d49",
-      "#ffebbf",
-      Math.PI / 2,
+  for (const stop of ROAD_STOPS) {
+    busStop(stop.shelter.x, stop.shelter.z, stop.shelter.yaw);
+    box(
+      chunk(stop.sign.x, stop.sign.z),
+      "#426b59",
+      stop.sign.x,
+      1.3,
+      stop.sign.z,
+      0.12,
+      2.6,
+      0.12,
     );
   }
   for (let i = 0; i < 430; i++) {
@@ -1215,18 +1188,6 @@ export function createWorld(): WorldData {
   for (let i = 0; i < 8; i++)
     box(chunk(350, -413), "#e7d7b0", 340 + i * 2, 0.8, -418, 0.2, 1.6, 0.2);
   box(chunk(347, -418), "#e7d7b0", 347, 1.4, -418, 16, 0.15, 0.15);
-  // Original helipad is reachable from the town's southern road.
-  root.add(
-    roadRibbon(
-      samplePath([
-        [0, 193],
-        [48, 193],
-      ]),
-      8,
-      "#88917c",
-      0.2,
-    ),
-  );
   for (const pad of HELIPADS) {
     const { x, z } = pad;
     box(chunk(x, z), "#84937a", x, 0.12, z, 24, 0.18, 24);
@@ -1237,43 +1198,6 @@ export function createWorld(): WorldData {
       for (const dz of [-11, 11])
         box(chunk(x, z), "#eac782", x + dx, 0.32, z + dz, 0.4, 0.4, 0.4);
   }
-  root.add(
-    roadRibbon(
-      samplePath([
-        [601, -203],
-        [625, -240],
-        [634, -281],
-      ]),
-      6,
-      "#aaa58a",
-      0.18,
-    ),
-  );
-  root.add(
-    roadRibbon(
-      samplePath([
-        [335, -400],
-        [351, -441],
-        [375, -481],
-      ]),
-      6,
-      "#aaa58a",
-      0.18,
-    ),
-  );
-  root.add(
-    roadRibbon(
-      samplePath([
-        [167, -265],
-        [177, -360],
-        [190, -450],
-        [188, -566],
-      ]),
-      7,
-      "#aaa58a",
-      0.18,
-    ),
-  );
   buildParks({ root, chunk, box, tree, palm, house, sign, colliders, waters });
   for (const v of VEHICLE_SPAWNS.filter((v) => v.kind !== "helicopter")) {
     const x = Number(v.x),
@@ -1289,6 +1213,74 @@ export function createWorld(): WorldData {
         0.14,
       ),
     );
+  }
+  // Enforce the same clearance corridor on visible assets and solid volumes.
+  const bounds = new T.Box3(),
+    size = new T.Vector3(),
+    center = new T.Vector3();
+  for (const ch of chunks)
+    for (const child of [...ch.children]) {
+      if (
+        npcs.some(
+          (n) =>
+            isDescendant(child, n.person.group) || child === n.person.group,
+        ) ||
+        animals.includes(child as T.Group)
+      )
+        continue;
+      child.updateMatrixWorld(true);
+      bounds.setFromObject(child);
+      bounds.getSize(size);
+      bounds.getCenter(center);
+      if (
+        size.y > 0.4 &&
+        bounds.min.y < 4 &&
+        clearRoadFootprint(center.x, center.z, size.x, size.z)
+      )
+        child.removeFromParent();
+    }
+  for (let i = colliders.length - 1; i >= 0; i--) {
+    const c = colliders[i];
+    if (!c.water && clearRoadFootprint(c.x, c.z, c.w, c.d))
+      colliders.splice(i, 1);
+  }
+  // Lane-normal placement: every lamp and guardrail sits beyond the shoulder.
+  for (let s = 0; s < MAIN_ROAD.length; s += 32) {
+    if (ROAD_STOPS.some((stop) => loopDelta(s, stop.s, MAIN_ROAD.length) < 40))
+      continue;
+    const f = roadFrame(MAIN_ROAD, s, MAIN_ROAD.width / 2 + 3.5),
+      g = new T.Group();
+    if (insideOtherRoad(f.x, f.z, MAIN_ROAD.id, 1)) continue;
+    g.position.set(f.x, heightAt(f.x, f.z), f.z);
+    g.rotation.y = f.yaw;
+    root.add(g);
+    box(g, "#526c57", 0, 3, 0, 0.18, 6, 0.18);
+    box(g, "#526c57", -0.7, 5.85, 0, 1.5, 0.12, 0.15);
+    box(g, "#f5dfa3", -1.4, 5.7, 0, 0.65, 0.15, 0.5);
+    colliders.push({ x: f.x, z: f.z, w: 0.3, d: 0.3, h: 6 });
+  }
+  for (let s = 4; s < MAIN_ROAD.length - 8; s += 8) {
+    const center = roadFrame(MAIN_ROAD, s);
+    if (
+      center.y < 8 ||
+      ROAD_STOPS.some((stop) => loopDelta(s, stop.s, MAIN_ROAD.length) < 42)
+    )
+      continue;
+    for (const side of [-1, 1]) {
+      const offset = side * (MAIN_ROAD.width / 2 + 2.7),
+        a = roadFrame(MAIN_ROAD, s, offset),
+        b = roadFrame(MAIN_ROAD, s + 8, offset),
+        g = new T.Group();
+      if ([a, b].some((f) => insideOtherRoad(f.x, f.z, MAIN_ROAD.id, 1)))
+        continue;
+      g.position.set((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.8, (a.z + b.z) / 2);
+      g.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+      g.rotation.x = -Math.atan2(b.y - a.y, Math.hypot(b.x - a.x, b.z - a.z));
+      root.add(g);
+      box(g, "#c4c3a5", 0, 0, 0, 0.16, 0.24, Math.hypot(b.x - a.x, b.z - a.z));
+      for (const zz of [-3, 3])
+        box(g, "#647465", 0, -0.35, zz, 0.12, 0.9, 0.12);
+    }
   }
   // Lift whole assets, never individual parts, so houses and trees retain their shape.
   for (const ch of chunks) {

@@ -49,37 +49,6 @@ export type ParkDefinition = {
 function buildSarovaram(b: ParkBuilders) {
   const { box, chunk, root, tree, palm, house, sign } = b;
   // A plateau park with a lake loop, promenades and a drivable entrance.
-  for (const points of [
-    [
-      [565, -259],
-      [535, -259],
-      [514, -259],
-      [505, -215],
-      [405, -215],
-      [395, -310],
-      [504, -324],
-      [514, -259],
-    ],
-    [
-      [395, -310],
-      [455, -339],
-      [504, -324],
-    ],
-    [
-      [405, -215],
-      [415, -245],
-      [495, -245],
-      [505, -215],
-    ],
-  ])
-    root.add(
-      roadRibbon(
-        samplePath(points),
-        points[0][0] === 565 ? 7 : 4,
-        "#d5c8a0",
-        0.2,
-      ),
-    );
   for (const x of [535])
     for (const z of [-247, -271]) box(chunk(x, z), "#e1c592", x, 4, z, 3, 8, 3);
   box(chunk(535, -259), "#355e49", 535, 8, -259, 3, 1.8, 29);
@@ -96,21 +65,8 @@ function buildSarovaram(b: ParkBuilders) {
     Math.PI / 2,
   );
   // Gate-to-parking access is open and wide enough for buses and cars.
-  root.add(
-    roadRibbon(
-      samplePath([
-        [565, -233],
-        [596, -233],
-        [596, -286],
-        [565, -286],
-      ]),
-      12,
-      "#899486",
-      0.22,
-    ),
-  );
   for (let z = -280; z < -233; z += 7)
-    box(chunk(588, z), "#eee4c4", 588, 0.26, z, 8, 0.025, 0.15);
+    box(chunk(593, z), "#eee4c4", 593, 0.26, z, 8, 0.025, 0.15);
   const lake = new T.Mesh(
     new T.PlaneGeometry(72, 49, 24, 16),
     new T.MeshStandardMaterial({

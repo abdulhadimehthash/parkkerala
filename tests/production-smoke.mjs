@@ -150,6 +150,11 @@ try {
   await q.waitForTimeout(700);
   await p.getByRole("button", { name: "Toggle microphone" }).click();
   await q.getByRole("button", { name: "Toggle microphone" }).click();
+  await p.waitForFunction(
+    () =>
+      window.qa.snapshot.players.find((p) => p.id === window.qa.id)?.mic ===
+      false,
+  );
   assert.equal((await self(p)).mic, false);
   console.log("PASS mute");
   await p.keyboard.press("m");

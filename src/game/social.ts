@@ -1,3 +1,4 @@
+import { groundPose } from "../../shared/roads.js";
 import * as T from "three";
 import {
   Network,
@@ -73,11 +74,11 @@ export class SocialGame {
         new T.PlaneGeometry(3, 0.9),
         new T.MeshBasicMaterial({ map: texture, side: T.DoubleSide }),
       );
-      sprite.rotation.y = Math.PI / 2;
+      sprite.rotation.y = stop.sign.yaw;
       sprite.position.set(
-        stop.x + 9.2,
-        heightAt(stop.x + 11, stop.z) + 2.65,
-        stop.z,
+        stop.sign.x,
+        heightAt(stop.sign.x, stop.sign.z) + 2.65,
+        stop.sign.z,
       );
 
       scene.add(sprite);
@@ -195,7 +196,17 @@ export class SocialGame {
           Math.cos(display.yaw - model.rotation.y),
         ) *
         (1 - Math.exp(-14 * dt));
-      model.userData.body.rotation.x = display.pitch || 0;
+      const onRoad = model.visible
+        ? groundPose(
+            model.position.x,
+            model.position.z,
+            model.rotation.y,
+            v.kind,
+          )
+        : display;
+      if (v.kind !== "helicopter") model.position.y = onRoad.y;
+      model.userData.body.rotation.x =
+        v.kind === "helicopter" ? 0 : onRoad.pitch;
       if (model.userData.rotor)
         model.userData.rotor.rotation.y += dt * (v.owner ? 35 : 1);
       this.interactions.items.push({
@@ -233,6 +244,16 @@ export class SocialGame {
         ) *
         (1 - Math.exp(-13 * dt));
       model.visible = Math.hypot(bus.x - self.x, bus.z - self.z) < 220;
+      const pose = model.visible
+        ? groundPose(
+            model.position.x,
+            model.position.z,
+            model.rotation.y,
+            "bus",
+          )
+        : bus;
+      model.position.y = pose.y;
+      model.userData.body.rotation.x = pose.pitch;
       model.userData.door.visible = !bus.doors;
       if (this.mode === "bus" && bus.id === self.vehicleId) {
         const seat = worldSeat(
@@ -241,6 +262,7 @@ export class SocialGame {
             y: model.position.y,
             z: model.position.z,
             yaw: model.rotation.y,
+            pitch: model.userData.body.rotation.x,
           },
           self.seat ?? 0,
         );

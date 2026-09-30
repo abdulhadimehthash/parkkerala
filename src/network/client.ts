@@ -29,6 +29,8 @@ export type VehicleState = {
   color: string;
 };
 export type BusState = {
+  pitch: number;
+  routeS: number;
   id: string;
   x: number;
   y: number;

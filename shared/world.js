@@ -1,56 +1,19 @@
+import { MAIN_ROAD, ROAD_STOPS } from "./roads.js";
 import { VOICE, HELIPADS } from "./config.js";
 // Shared deterministic geography used by rendering, movement and the game server.
 export const BOUNDS = { minX: -244, maxX: 720, minZ: -720, maxZ: 290 };
 export const TICK_RATE = 20;
 export const SEAT_COUNT = 20;
-export const smooth = (t) => {
-  t = Math.max(0, Math.min(1, t));
-  return t * t * (3 - 2 * t);
-};
-function naturalHeight(x, z) {
-  const north = smooth((-z - 170) / 190),
-    east = smooth((x - 235) / 170);
-  const hills =
-    42 +
-    22 * Math.sin(x / 130) +
-    19 * Math.cos(z / 150) +
-    12 * Math.sin((x + z) / 90);
-  const raw = Math.max(north, east) * Math.max(9, hills);
-  const parkBlend =
-    1 -
-    smooth(
-      (Math.max(Math.abs(x - 459) / 90, Math.abs(z + 260) / 90) - 0.8) / 0.55,
-    );
-  return raw * (1 - parkBlend) + 40 * parkBlend;
-}
-export function heightAt(x, z) {
-  let h = naturalHeight(x, z);
-  for (const pad of HELIPADS) {
-    const weight = 1 - smooth((Math.hypot(x - pad.x, z - pad.z) - 14) / 12);
-    h = h * (1 - weight) + naturalHeight(pad.x, pad.z) * weight;
-  }
-  return h;
-}
-export const HILL_ROAD = [
-  [150, -230],
-  [167, -265],
-  [208, -282],
-  [258, -307],
-  [306, -348],
-  [335, -400],
-  [393, -436],
-  [462, -431],
-  [517, -389],
-  [551, -329],
-  [565, -259],
-  [601, -203],
-  [614, -135],
-  [578, -78],
-  [505, -39],
-  [414, 3],
-  [318, 34],
-  [223, 34],
-];
+import { smooth } from "./terrain-base.js";
+export { smooth };
+export {
+  terrainHeight as heightAt,
+  surfaceHeight,
+  walkingHeight,
+} from "./roads.js";
+export const HILL_ROAD = MAIN_ROAD.points
+  .filter((p) => p.z < -230 || p.x > 223)
+  .map((p) => [p.x, p.z]);
 export const PARK = {
   id: "sarovaram",
   name: "Sarovaram Park",
@@ -62,61 +25,12 @@ export const PARK = {
   entrance: { x: 552, z: -259 },
   spawn: { x: 535, z: -259 },
 };
-export const STOPS = [
-  { id: "town", name: "Chayapuram", local: "ചായപ്പുറം", x: 26, z: 34 },
-  {
-    id: "riverside",
-    name: "Neela Riverside",
-    local: "നീലക്കായൽ",
-    x: 150,
-    z: -116,
-  },
-  {
-    id: "village",
-    name: "Vellaram Village",
-    local: "വെള്ളാരം",
-    x: 150,
-    z: -209,
-  },
-  {
-    id: "viewpoint",
-    name: "Malar Viewpoint",
-    local: "മലർ മല",
-    x: 335,
-    z: -400,
-  },
-  {
-    id: "sarovaram",
-    name: "Sarovaram Park",
-    local: "സരോവരം പാർക്ക്",
-    x: 565,
-    z: -259,
-  },
-  {
-    id: "east",
-    name: "Eastern Valley",
-    local: "കിഴക്കൻ താഴ്വര",
-    x: 505,
-    z: -39,
-  },
-];
-export const ROUTE = [
-  [26, 34],
-  [100, 34],
-  [150, 34],
-  [150, -70],
-  [150, -116],
-  [150, -170],
-  [150, -209],
-  ...HILL_ROAD,
-  [150, 34],
-  [90, 34],
-  [26, 34],
-];
+export const STOPS = ROAD_STOPS;
+export const ROUTE = MAIN_ROAD.points.map((p) => [p.x, p.z]);
 /** @type {[string,number,number][]} */
 const cars = [
   ["car-town", 21, 54],
-  ["car-park", 584, -239],
+  ["car-park", 595, -239],
   ["car-village", 140, -198],
   ["car-riverside", 137, -119],
   ["car-hill", 326, -420],
@@ -126,13 +40,13 @@ const cars = [
 /** @type {[string,number,number][]} */
 const bikes = [
   ["bike-town", -19, 43],
-  ["scooter-park", 580, -280],
+  ["scooter-park", 575, -280],
   ["bike-shops", 20, 4],
   ["bike-residential", -26, 154],
   ["bike-fuel", 30, 108],
   ["bike-riverside", 133, -113],
   ["bike-village", 140, -221],
-  ["bike-hill", 322, -406],
+  ["bike-hill", 312, -414],
   ["bike-ridge", 391, -454],
   ["bike-valley", 520, -27],
   ["bike-east", 315, 48],
@@ -211,11 +125,14 @@ export function seatOffset(index) {
   };
 }
 export function worldSeat(bus, index) {
-  const s = seatOffset(index);
+  const seat = seatOffset(index),
+    pitch = bus.pitch || 0,
+    yy = 0.9 * Math.cos(pitch) - seat.z * Math.sin(pitch),
+    zz = 0.9 * Math.sin(pitch) + seat.z * Math.cos(pitch);
   return {
-    x: bus.x + s.x * Math.cos(bus.yaw) + s.z * Math.sin(bus.yaw),
-    y: bus.y + 0.9,
-    z: bus.z - s.x * Math.sin(bus.yaw) + s.z * Math.cos(bus.yaw),
+    x: bus.x + seat.x * Math.cos(bus.yaw) + zz * Math.sin(bus.yaw),
+    y: bus.y + yy,
+    z: bus.z - seat.x * Math.sin(bus.yaw) + zz * Math.cos(bus.yaw),
   };
 }
 export const PARK_COLLIDERS = [

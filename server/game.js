@@ -1,3 +1,4 @@
+import { surfaceHeight } from "../shared/roads.js";
 import { MOVEMENT, TRANSPORT } from "../shared/config.js";
 import { malayalamDisplayName } from "../shared/names.js";
 import { randomUUID } from "node:crypto";
@@ -5,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { heightAt, sanitizeName, SEAT_COUNT, STOPS } from "../shared/world.js";
 import {
   makeVehicles,
+  BusRecovery,
   stepVehicle,
   safeExit,
   createBusSchedule,
@@ -26,6 +28,7 @@ export class Game {
     this.respawnSeconds = respawnSeconds;
     this.players = new Map();
     this.vehicles = makeVehicles();
+    this.busRecovery = new BusRecovery();
     this.schedule = createBusSchedule(interval, dwell);
     this.now = now;
     this.epoch = now();
@@ -152,7 +155,7 @@ export class Game {
     if (!v) return;
     if (p.mode === "bus" && !v.doors)
       throw Error("You can exit at the next bus stop.");
-    if (p.mode === "helicopter" && v.y - heightAt(v.x, v.z) > 0.9)
+    if (p.mode === "helicopter" && v.y - surfaceHeight(v.x, v.z) > 0.9)
       throw Error("Land the helicopter before exiting.");
     if (p.mode !== "bus" && Math.abs(v.speed) > 1.5)
       throw Error("Stop the vehicle before exiting.");
@@ -188,7 +191,7 @@ export class Game {
     const now = this.now(),
       seconds = (now - this.epoch) / 1000;
     this.buses = Array.from({ length: this.schedule.fleet }, (_, i) => ({
-      ...busAt(this.schedule, seconds, i),
+      ...this.busRecovery.update(busAt(this.schedule, seconds, i), seconds),
       seats: this.seats[i],
     }));
     for (const v of this.vehicles) {
@@ -205,7 +208,8 @@ export class Game {
         }
       }
       if (now - v.inputAt > 450) v.input = { brake: true };
-      stepVehicle(v, v.input, dt, collisionData);
+      if (v.owner || Math.abs(v.speed) > 0.001 || Math.abs(v.vy) > 0.001)
+        stepVehicle(v, v.input, dt, collisionData);
     }
     for (const p of this.players.values()) {
       if (p.mode === "walk") continue;

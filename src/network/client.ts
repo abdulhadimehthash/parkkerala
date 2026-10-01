@@ -62,6 +62,7 @@ export class Network {
   timeline = new SnapshotBuffer(150);
   ballTimeline = new SnapshotBuffer(75);
   id = "";
+  voiceToken = "";
   name = "";
   connected = false;
   snapshot: Snapshot | null = null;
@@ -96,6 +97,7 @@ export class Network {
         this.timeline.push(d, performance.now());
         this.ballTimeline.push(d, performance.now());
         this.id = d.id;
+        this.voiceToken = d.voiceToken || "";
         this.connected = true;
         this.onStatus("Online");
         this.snapshot = d;
@@ -121,6 +123,7 @@ export class Network {
       this.ballTimeline.clear();
       this.connected = false;
       this.id = "";
+      this.voiceToken = "";
       this.snapshot = null;
       this.onStatus(this.closed ? "Choose another username" : "Reconnecting…");
       if (!this.closed)

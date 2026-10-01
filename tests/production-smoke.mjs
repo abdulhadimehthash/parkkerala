@@ -1,14 +1,43 @@
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
 // Runs real browser clients against the public build, without development hooks.
 // Uses synthetic audio; never opens the operator's real microphone.
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import assert from "node:assert/strict";
 import { voiceVolume } from "../shared/world.js";
 const url = process.env.PARK_URL || "https://parkkerala.onrender.com";
+const audioDir = mkdtempSync(pathJoin(tmpdir(), "park-voice-"));
+const audioPath = pathJoin(audioDir, "speech-signal.wav");
+const samples = 48000 * 2,
+  wav = Buffer.alloc(44 + samples * 2);
+wav.write("RIFF");
+wav.writeUInt32LE(wav.length - 8, 4);
+wav.write("WAVEfmt ", 8);
+wav.writeUInt32LE(16, 16);
+wav.writeUInt16LE(1, 20);
+wav.writeUInt16LE(1, 22);
+wav.writeUInt32LE(48000, 24);
+wav.writeUInt32LE(96000, 28);
+wav.writeUInt16LE(2, 32);
+wav.writeUInt16LE(16, 34);
+wav.write("data", 36);
+wav.writeUInt32LE(samples * 2, 40);
+for (let i = 0; i < samples; i++) {
+  const t = i / 48000;
+  const wave =
+    (Math.sin(t * 220 * Math.PI * 2) + 0.4 * Math.sin(t * 440 * Math.PI * 2)) *
+    0.32 *
+    (0.65 + 0.35 * Math.sin(t * 5 * Math.PI * 2));
+  wav.writeInt16LE(Math.round(wave * 32767), 44 + i * 2);
+}
+writeFileSync(audioPath, wav);
 const browser = await chromium.launch({
   channel: "chrome",
   args: [
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
+    `--use-file-for-fake-audio-capture=${audioPath}`,
     "--autoplay-policy=no-user-gesture-required",
   ],
 });
@@ -16,12 +45,19 @@ const errors = [];
 async function join(name) {
   const ctx = await browser.newContext({
       permissions: ["microphone"],
-      viewport: { width: 1440, height: 900 },
+      viewport: { width: 1000, height: 700 },
     }),
     p = await ctx.newPage();
   p.on("pageerror", (e) => errors.push(e.message));
   await p.addInitScript(() => {
-    window.qa = { snapshot: null, id: null, pcs: [], gains: {}, socket: null };
+    window.qa = {
+      snapshot: null,
+      id: null,
+      pcs: [],
+      gains: {},
+      decoded: {},
+      socket: null,
+    };
     const WS = window.WebSocket;
     window.WebSocket = class extends WS {
       constructor(...args) {
@@ -49,6 +85,11 @@ async function join(name) {
         this instanceof MediaStreamAudioSourceNode
           ? this.mediaStream.id
           : streams.get(this);
+      if (
+        this instanceof MediaStreamAudioSourceNode &&
+        target instanceof AnalyserNode
+      )
+        window.qa.decoded[id] = target;
       if (id && target instanceof AudioNode) {
         streams.set(target, id);
         if (target instanceof GainNode) window.qa.gains[id] = target;
@@ -61,6 +102,9 @@ async function join(name) {
   await p.getByRole("button", { name: "Enter Park Kerala" }).click();
   await p.waitForFunction(() => window.qa.id, null, { timeout: 30000 });
   await p.waitForTimeout(500);
+  await p.getByRole("button", { name: "Open settings" }).click();
+  await p.locator("#quality").selectOption("low");
+  await p.getByRole("button", { name: "Back to the world" }).click();
   return p;
 }
 const self = (p) =>
@@ -74,23 +118,36 @@ async function hold(p, key, ms) {
   await p.waitForTimeout(250);
 }
 async function audioFlow(p) {
-  await p.waitForFunction(
-    async () => {
-      for (const pc of window.qa.pcs) {
-        if (pc.connectionState !== "connected") continue;
-        let sent = 0,
-          received = 0;
-        for (const s of (await pc.getStats()).values()) {
-          if (s.type === "outbound-rtp") sent += s.bytesSent || 0;
-          if (s.type === "inbound-rtp") received += s.bytesReceived || 0;
-        }
-        if (sent > 0 && received > 0) return true;
-      }
-      return false;
-    },
-    null,
-    { timeout: 30000 },
-  );
+  await expect
+    .poll(
+      () =>
+        p.evaluate(async () => {
+          for (const pc of window.qa.pcs) {
+            if (pc.connectionState !== "connected") continue;
+            let sent = 0,
+              received = 0;
+            for (const s of (await pc.getStats()).values()) {
+              if (s.type === "outbound-rtp") sent += s.bytesSent || 0;
+              if (s.type === "inbound-rtp") received += s.bytesReceived || 0;
+            }
+            if (sent > 100 && received > 100) {
+              for (const node of Object.values(window.qa.decoded)) {
+                const samples = new Float32Array(node.fftSize);
+                node.getFloatTimeDomainData(samples);
+                if (
+                  Math.sqrt(
+                    samples.reduce((n, v) => n + v * v, 0) / samples.length,
+                  ) > 0.001
+                )
+                  return true;
+              }
+            }
+          }
+          return false;
+        }),
+      { timeout: 30000 },
+    )
+    .toBe(true);
 }
 try {
   const p = await join("Hadi"),
@@ -264,4 +321,5 @@ try {
   console.log("PASS no browser errors");
 } finally {
   await browser.close();
+  rmSync(audioDir, { recursive: true, force: true });
 }

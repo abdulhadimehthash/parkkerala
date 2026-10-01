@@ -16,6 +16,7 @@ type Peer = {
   createdAt: number;
   restartCount: number;
   restarting: boolean;
+  lastRestartAt: number;
 };
 export class ProximityVoice {
   stream: MediaStream | null = null;
@@ -24,6 +25,8 @@ export class ProximityVoice {
   muted = false;
   turnConfigured = false;
   private servers: RTCIceServer[] = [];
+  private configPending: Promise<void> | null = null;
+  private configRefreshAt = 0;
   private context: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
@@ -57,14 +60,60 @@ export class ProximityVoice {
     };
   }
   async configure() {
-    try {
-      const res = await fetch("/api/config");
-      const config = await res.json();
-      this.servers = config.iceServers;
-      this.turnConfigured = config.turnConfigured;
-    } catch {
-      this.onStatus("Voice service unavailable.");
-    }
+    if (this.configPending) return this.configPending;
+    const token = this.network.voiceToken;
+    this.configPending = (async () => {
+      try {
+        const res = await fetch("/api/config", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) throw Error("Voice configuration unavailable");
+        const config = await res.json();
+        if (token !== this.network.voiceToken) {
+          this.configRefreshAt = 0;
+          return;
+        }
+        const credentialsChanged =
+          JSON.stringify(this.servers) !== JSON.stringify(config.iceServers);
+        this.servers = config.iceServers;
+        this.turnConfigured = !!config.turnConfigured;
+        this.configRefreshAt =
+          Date.now() +
+          Math.max(
+            30000,
+            (config.expiresAt || Date.now() + 600000) - Date.now() - 300000,
+          );
+        for (const [id, peer] of this.peers) {
+          try {
+            peer.pc.setConfiguration({
+              ...peer.pc.getConfiguration(),
+              iceServers: this.servers,
+            });
+          } catch {
+            this.drop(id);
+            continue;
+          }
+          if (credentialsChanged) peer.restartCount = 0;
+          if (
+            this.turnConfigured &&
+            (credentialsChanged || peer.pc.connectionState !== "connected")
+          )
+            void this.restart(id);
+        }
+        if (config.relayUnavailable && this.enabled)
+          this.onStatus(
+            "Voice relay is temporarily unavailable. Direct voice is still enabled.",
+          );
+      } catch {
+        this.configRefreshAt = Date.now() + 30000;
+        if (this.enabled)
+          this.onStatus("Voice settings will retry automatically.");
+      } finally {
+        this.configPending = null;
+      }
+    })();
+    return this.configPending;
   }
   async toggle() {
     if (this.wantMicrophone || this.enabled) {
@@ -170,20 +219,22 @@ export class ProximityVoice {
   private async restart(id: string) {
     const peer = this.peers.get(id);
     if (!peer || peer.restarting) return;
+    // Both browsers may request renewal together. Keep one negotiation alive
+    // instead of interpreting the second request as a failed recovery attempt.
+    const now = performance.now();
+    if (peer.pc.signalingState !== "stable" || now - peer.lastRestartAt < 1500)
+      return;
     if (peer.restartCount >= 1) {
       this.retry(id);
       return;
     }
     peer.restartCount++;
+    peer.lastRestartAt = now;
     peer.createdAt = performance.now();
     peer.disconnectedAt = 0;
     peer.restarting = true;
     try {
       if (this.network.id < id) {
-        if (peer.pc.signalingState !== "stable") {
-          peer.restartCount--;
-          return;
-        }
         peer.pc.restartIce();
         const offer = await peer.pc.createOffer({ iceRestart: true });
         await peer.pc.setLocalDescription(offer);
@@ -224,6 +275,7 @@ export class ProximityVoice {
       createdAt: performance.now(),
       restartCount: 0,
       restarting: false,
+      lastRestartAt: -Infinity,
     };
     this.peers.set(id, peer);
     if (this.network.id < id) {
@@ -299,6 +351,7 @@ export class ProximityVoice {
             signal: { description: peer.pc.localDescription },
           });
         }
+        if (peer.pc.connectionState === "connected") peer.restartCount = 0;
       } else if (signal.candidate) {
         if (peer.pc.remoteDescription)
           await peer.pc.addIceCandidate(signal.candidate);
@@ -315,8 +368,10 @@ export class ProximityVoice {
     }
     if (this.joinedId !== self.id) {
       this.joinedId = self.id;
+      this.configRefreshAt = 0;
       this.network.send({ type: "voice", mic: this.enabled, speaking: false });
     }
+    if (Date.now() >= this.configRefreshAt) void this.configure();
     const nearby = new Set<string>();
     for (const p of players) {
       if (p.id === self.id) continue;
@@ -431,6 +486,8 @@ export class ProximityVoice {
     }
   }
   reconnect() {
+    this.configRefreshAt = 0;
+    void this.configure();
     for (const id of this.peers.keys()) void this.restart(id);
     this.onStatus("Reconnecting nearby voice…");
   }

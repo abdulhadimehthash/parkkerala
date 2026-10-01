@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Game } from "./game.js";
 import { heightAt } from "../shared/world.js";
+import { randomBytes } from "node:crypto";
+import { createVoiceConfig } from "./voice-config.js";
 const app = express(),
   server = createServer(app),
   production = process.env.NODE_ENV === "production";
@@ -28,6 +30,8 @@ const respawnSeconds = Math.max(
     TRANSPORT.abandonedVehicleSeconds,
 );
 const game = new Game({ interval, dwell, respawnSeconds });
+const voiceConfig = createVoiceConfig(),
+  voiceSessions = new Map();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -44,24 +48,28 @@ app.get("/health", (_, res) =>
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
   }),
 );
-app.get("/api/config", (_, res) => {
-  const iceServers = [
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-  ];
-  if (
-    process.env.TURN_URL &&
-    process.env.TURN_USERNAME &&
-    process.env.TURN_CREDENTIAL
-  )
-    iceServers.push({
-      urls: process.env.TURN_URL,
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL,
-    });
+app.get("/api/config", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
+  const token = req.headers.authorization?.replace(/^Bearer /, "");
+  if (token && !voiceSessions.has(token)) return res.sendStatus(401);
+  let config = voiceConfig.publicConfig();
+  if (token) {
+    try {
+      config = await voiceConfig.forSession(token);
+    } catch {
+      config = {
+        ...config,
+        relayUnavailable: true,
+        expiresAt: Date.now() + 60000,
+      };
+      console.warn(
+        "Voice relay credential service unavailable; direct voice remains enabled.",
+      );
+    }
+    if (!voiceSessions.has(token)) return res.sendStatus(401);
+  }
   res.json({
-    iceServers,
-    turnConfigured: iceServers.length > 1,
+    ...config,
     busInterval: interval,
     busDwell: dwell,
     voiceRadius: VOICE.radius,
@@ -72,7 +80,21 @@ app.use((req, res) => {
   if (req.path.startsWith("/api/")) return res.sendStatus(404);
   res.sendFile(path.join(root, "dist/index.html"));
 });
-const wss = new WebSocketServer({ server, path: "/world", maxPayload: 16384 });
+const wss = new WebSocketServer({
+  server,
+  path: "/world",
+  maxPayload: 16384,
+  // Keep the 20 Hz simulation while reducing repeated world-state traffic.
+  // Bound compression memory/concurrency for the small Render instance.
+  perMessageDeflate: {
+    threshold: 1024,
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+    serverMaxWindowBits: 10,
+    concurrencyLimit: 4,
+    zlibDeflateOptions: { level: 1, memLevel: 4 },
+  },
+});
 const sockets = new Map();
 function send(ws, data) {
   if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
@@ -100,6 +122,7 @@ wss.on("connection", (ws, request) => {
     return;
   }
   let id = null,
+    voiceToken = null,
     count = 0,
     windowAt = Date.now(),
     alive = true;
@@ -126,8 +149,10 @@ wss.on("connection", (ws, request) => {
         if (id) return;
         const p = game.add(data.name);
         id = p.id;
+        voiceToken = randomBytes(24).toString("base64url");
+        voiceSessions.set(voiceToken, id);
         sockets.set(id, ws);
-        send(ws, { ...game.snapshot(), id, type: "welcome" });
+        send(ws, { ...game.snapshot(), id, voiceToken, type: "welcome" });
         return;
       }
       if (!id) return;
@@ -184,6 +209,10 @@ wss.on("connection", (ws, request) => {
     }
   });
   ws.on("close", () => {
+    if (voiceToken) {
+      voiceSessions.delete(voiceToken);
+      voiceConfig.release(voiceToken);
+    }
     clearTimeout(timeout);
     clearInterval(heartbeat);
     if (id) {

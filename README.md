@@ -57,7 +57,13 @@ This version uses stable arcade vehicle handling, simplified collision volumes a
 
 Live browser-to-browser WebRTC audio uses distance attenuation: full volume through 25 metres, a smooth fade to 100 metres, then silence. Web Audio adds subtle camera-relative stereo panning. Leaving the nearby region closes that peer connection. Microphone permission, mute, denied permission and speaking indicators are handled locally. Neither the server nor the client records or stores conversations.
 
-Public STUN servers are configured by default. **Some networks require TURN**; provide `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` through Render environment settings for those networks. Use short-lived relay credentials where supported. Never commit real credentials. Without a relay, direct WebRTC has been tested locally and in same-network production clients; connectivity across restrictive NAT/firewalls is not guaranteed.
+Public STUN servers are configured by default. **Some networks require TURN**. Configure either the existing `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` settings, or Cloudflare Realtime TURN using `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` in Render's private environment settings. Never commit real credentials.
+
+For Cloudflare, create a TURN key in the account's Realtime dashboard, then add its key ID and API token to the existing Render service. The server requests one-hour credentials for each joined world session, caches concurrent requests, retries provider failures with a delay, and keeps still-valid credentials during a temporary provider outage. The browser refreshes credentials before expiry. The permanent provider token never reaches the browser. An unjoined visitor receives only STUN configuration; relay configuration requires the temporary session token received over the game's WebSocket. Disconnecting revokes access to further configuration requests; previously issued TURN credentials expire on their own TTL.
+
+See [Cloudflare's credential guide](https://developers.cloudflare.com/realtime/turn/generate-credentials/) and [current pricing](https://developers.cloudflare.com/realtime/sfu/platform/pricing/) before activation. Its published allowance is currently 1,000 GB/month, followed by usage charges. No provider account or billing subscription is created by this repository. Without configured provider credentials, direct voice remains available and restrictive-network coverage remains unverified.
+
+After configuration, run `PARK_URL=https://parkkerala.online node tests/relay-smoke.mjs`. This forces two real browsers to use relay candidates and checks decoded two-way audio; an ordinary direct WebRTC connection cannot satisfy that test. Set `TURN_TRANSPORT=tls` to require TURN over TLS on port 443. Do not report relay coverage as verified until this succeeds with the actual provider.
 
 ## Environment
 
@@ -69,6 +75,7 @@ See `.env.example` for names. The server reads process environment variables, no
 - `BUS_DWELL_SECONDS=8`: boarding time, clamped to 5–10 seconds
 - `VEHICLE_RESPAWN_SECONDS=180`: abandoned vehicle reset delay; occupied vehicles and nearby players prevent resets
 - `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL`: optional voice relay
+- `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN`: optional Cloudflare relay; takes precedence when both are set
 - `ALLOW_TEST_TOOLS=1`: **local development only**, enables test teleports; ignored in production
 
 ## Tests

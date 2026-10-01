@@ -27,3 +27,11 @@ A helicopter geometry batching console error discovered during the public audit 
 Extended autonomous public car/bike loops did **not** complete reliably: the test controller encountered delayed feedback, intermittent WebSocket 1006 disconnects and route departures. These runs must not be reported as passed full public driving circuits. Local complete circuits, branch/surface/jitter tests, shorter public vehicle controls, and public bus route observation passed separately.
 
 TURN is not configured because no provider credentials have been supplied. Voice on restrictive networks and human listening across two physical devices remain unverified. A full 64-player load test was not performed.
+
+## Networking and relay preparation follow-up
+
+World snapshots now negotiate bounded WebSocket compression while retaining the 20 Hz simulation. A paired five-second measurement received 98 snapshots on each connection: 200,259 compressed wire bytes versus 715,101 uncompressed bytes (72% lower traffic). Ten compressed local clients each received at least 196 snapshots over ten seconds; the largest observed gap was 113 ms.
+
+Optional Cloudflare TURN integration requests temporary credentials server-side for joined sessions, caches and renews them, backs off provider failures and revokes configuration access on disconnect. Static TURN settings remain supported. The browser updates existing connections and coalesces overlapping ICE restart requests. Two actual browsers retained the same peer connections and decoded two-way synthetic audio through simulated credential expiry. The existing microphone/device/ICE/signalling recovery test also passed. All 32 server tests and the production build passed.
+
+The public smoke test now explicitly polls asynchronous audio statistics and requires decoded PCM, avoiding a truthy Promise being mistaken for successful audio. The separate relay test forces selected relay candidates in both browsers; it has not passed against a real provider because no provider account or credentials are configured. These changes prepare relay support; they do not activate it. Live verification of this follow-up is pending deployment.

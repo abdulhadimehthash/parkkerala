@@ -88,6 +88,8 @@ npm run build
 npm test
 ```
 
+Public checks use `PARK_URL=https://parkkerala.online node tests/production-smoke.mjs` for two real browsers, and `node tests/production-route.mjs` for full car/bike circuits using ordinary server controls. The route check needs the town vehicles to be available and takes about five minutes.
+
 Browser tests use installed Google Chrome. They cover baseline movement/collision, hills and destinations, username validation, two-client movement, exclusive car ownership, driving, bike riding, helicopter takeoff/landing, live two-way simulated WebRTC packets and attenuation, denied microphone permission, synchronized buses, distinct passenger seats, travel and stop-only exits. Server tests cover invalid input, duplicate names, full buses, 20 unique seats, disconnect cleanup, terrain following and configurable schedules.
 
 If world collision geometry changes, run the game and `node tests/export-colliders.mjs`, then restart the game server. The exported collider data must be committed with the corresponding world changes.

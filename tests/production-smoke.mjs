@@ -62,6 +62,12 @@ async function join(name) {
     window.WebSocket = class extends WS {
       constructor(...args) {
         super(...args);
+        const send = this.send.bind(this);
+        this.send = (data) => {
+          const message = JSON.parse(data);
+          if (message.type === "move") window.qa.lastMove = message;
+          send(data);
+        };
         window.qa.socket = this;
         window.qa.url = args[0].toString();
         this.addEventListener("message", (e) => {
@@ -255,13 +261,19 @@ try {
       .getByRole("button", { name: "Return to the town square" })
       .click();
     await page.waitForTimeout(500);
+    // Returning to town resets camera yaw. Walk to the boarding lane using
+    // observed movement, not a duration that depends on browser frame rate.
     await page.keyboard.down("d");
-    await page.keyboard.down("s");
-    await page.waitForTimeout(500);
-    await page.keyboard.up("s");
-    await page.waitForTimeout(2100);
+    await page.waitForFunction(() => window.qa.lastMove?.x >= 25, null, {
+      timeout: 10000,
+    });
     await page.keyboard.up("d");
     await page.waitForTimeout(300);
+    const position = await self(page);
+    assert.ok(
+      Math.hypot(position.x - 26, position.z - 31) < 6,
+      JSON.stringify(position),
+    );
   }
   await p.waitForFunction(
     () =>
@@ -271,6 +283,11 @@ try {
     null,
     { timeout: 35000 },
   );
+  for (const page of [p, q]) {
+    await expect(page.locator("#interaction")).toContainText("ENTER BUS", {
+      timeout: 3000,
+    });
+  }
   await p.keyboard.press("e");
   await q.keyboard.press("e");
   for (const page of [p, q])

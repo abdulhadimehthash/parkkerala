@@ -9,6 +9,7 @@ import { Game } from "./game.js";
 import { heightAt } from "../shared/world.js";
 import { randomBytes } from "node:crypto";
 import { createVoiceConfig } from "./voice-config.js";
+import { encodeSnapshot } from "./snapshot-wire.js";
 const app = express(),
   server = createServer(app),
   production = process.env.NODE_ENV === "production";
@@ -225,7 +226,7 @@ wss.on("connection", (ws, request) => {
 const timer = setInterval(() => {
   game.tick(0.05);
   {
-    const payload = JSON.stringify(game.snapshot());
+    const payload = encodeSnapshot(game.snapshot());
     for (const ws of sockets.values())
       if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
         ws.send(payload);

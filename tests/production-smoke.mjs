@@ -42,17 +42,18 @@ async function join(name) {
         window.qa.pcs.push(this);
       }
     };
-    const AC = window.AudioContext;
-    window.AudioContext = class extends AC {
-      createMediaStreamSource(stream) {
-        const node = super.createMediaStreamSource(stream),
-          connect = node.connect.bind(node);
-        node.connect = (target, ...args) => {
-          if (target instanceof GainNode) window.qa.gains[stream.id] = target;
-          return connect(target, ...args);
-        };
-        return node;
+    const streams = new WeakMap();
+    const connect = AudioNode.prototype.connect;
+    AudioNode.prototype.connect = function (target, ...args) {
+      const id =
+        this instanceof MediaStreamAudioSourceNode
+          ? this.mediaStream.id
+          : streams.get(this);
+      if (id && target instanceof AudioNode) {
+        streams.set(target, id);
+        if (target instanceof GainNode) window.qa.gains[id] = target;
       }
+      return connect.call(this, target, ...args);
     };
   });
   await p.goto(url);

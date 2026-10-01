@@ -95,7 +95,12 @@ export function vehicleModel(kind: string, color = "#ceaa61") {
     if (meshes.length < 2) continue;
     const geometries = meshes.map((m) => {
       m.updateMatrix();
-      return m.geometry.clone().applyMatrix4(m.matrix);
+      // Spheres use flat-shaded, non-indexed geometry while boxes are indexed.
+      // Give every part the same layout before batching a helicopter body.
+      const geometry = m.geometry.index
+        ? m.geometry.toNonIndexed()
+        : m.geometry.clone();
+      return geometry.applyMatrix4(m.matrix);
     });
     const geometry = mergeGeometries(geometries, false);
     if (geometry) {

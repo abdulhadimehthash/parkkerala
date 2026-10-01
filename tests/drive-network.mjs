@@ -25,7 +25,12 @@ async function drive(kind) {
     page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
-    window.qa = { id: null, snapshot: null };
+    window.qa = { id: null, snapshot: null, yaw: 0 };
+    const rotate = CanvasRenderingContext2D.prototype.rotate;
+    CanvasRenderingContext2D.prototype.rotate = function (a) {
+      if (this.canvas.id === "minimap") window.qa.yaw = -a;
+      return rotate.call(this, a);
+    };
     const WS = window.WebSocket;
     window.WebSocket = class extends WS {
       constructor(...args) {
@@ -52,12 +57,36 @@ async function drive(kind) {
   assert.equal(v.owner, null, kind + " town vehicle is already in use");
   if (publicRun) {
     assert.equal(await page.evaluate(() => typeof window.__park), "undefined");
-    const side = kind === "car" ? "d" : "a";
-    await page.keyboard.down(side);
-    await page.keyboard.down("s");
-    await page.waitForTimeout(kind === "car" ? 3500 : 2700);
-    await page.keyboard.up(side);
-    await page.keyboard.up("s");
+    async function walk(x, z) {
+      const start = Date.now();
+      while (Date.now() - start < 90000) {
+        const p = await page.evaluate(() =>
+          window.qa.snapshot.players.find((p) => p.id === window.qa.id),
+        );
+        if (Math.hypot(x - p.x, z - p.z) < 2) {
+          await page.keyboard.up("w");
+          return;
+        }
+        const desired = Math.atan2(-(x - p.x), -(z - p.z));
+        const yaw = await page.evaluate(() => window.qa.yaw);
+        const step = Math.max(-0.85, Math.min(0.85, angle(desired - yaw)));
+        if (Math.abs(step) > 0.015) {
+          await page.mouse.move(650, 400);
+          await page.mouse.down();
+          await page.mouse.move(650 - step / 0.003, 400, { steps: 2 });
+          await page.mouse.up();
+        }
+        await page.keyboard.down("w");
+        await page.waitForTimeout(100);
+      }
+      await page.keyboard.up("w");
+      throw Error("Could not walk to vehicle " + kind);
+    }
+    if (v.x > 60) {
+      await walk(0, 18);
+      await walk(v.x, 18);
+    }
+    await walk(v.x, v.z);
   } else await page.evaluate((v) => window.__park.teleport(v.x + 3, v.z), v);
   await page.waitForTimeout(500);
   await page.keyboard.press("e");
@@ -160,7 +189,8 @@ async function drive(kind) {
   await context.close();
 }
 try {
-  await Promise.all([drive("car"), drive("bike")]);
+  if (process.env.PARK_KIND) await drive(process.env.PARK_KIND);
+  else await Promise.all([drive("car"), drive("bike")]);
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();
